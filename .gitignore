@@ -2,7 +2,8 @@
 CLAUDE.md
 
 # local
-*.png
+templates/digit_samples
+templates/initial_collection
 .DS_Store
 
 # Byte-compiled / optimized / DLL files
