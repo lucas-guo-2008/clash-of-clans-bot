@@ -25,20 +25,35 @@ if __name__ == "__main__":
     cv2.namedWindow("ADB capture", cv2.WINDOW_NORMAL)
     cv2.resizeWindow("ADB capture", 960, 540)
 
-    template = cv2.imread("template matching/th-template.png")
-    h, w, c = template.shape
+    templates = {
+        "attack_template": cv2.imread("templates/attack.png"),
+        "find_match_template": cv2.imread("templates/find-match.png"),
+        "attack_button_template": cv2.imread("templates/attack-button.png"),
+        "end_battle_template": cv2.imread("templates/end-battle.png"),
+        "next_button_template": cv2.imread("templates/next-button.png")
+    }
+
+    THRESHOLD = 0.8
 
     while "Screen Capturing":
+        all_boxes = []
         frame = grab_frame(device)
 
         img2 = frame.copy()
-        result = cv2.matchTemplate(img2, template, cv2.TM_CCOEFF_NORMED)
-        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-        location = max_loc
 
-        cv2.rectangle(img2, location, (location[0]+w, location[1]+h), 255, 5)
-        cv2.putText(img2, f"match {max_val}", (50, 50), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 0), 1)
-        cv2.imshow("ADB capture", img2)
+        for label, template in templates.items():
+            h, w = template.shape[:2]
+            res = cv2.matchTemplate(img2, template, cv2.TM_CCOEFF_NORMED)
+            loc = np.where(res >= THRESHOLD)
+            for pt in zip(*loc[::-1]):  # Convert (y, x) to (x, y)
+                all_boxes.append([pt[0], pt[1], pt[0] + w, pt[1] + h, label, float(res[pt[1], pt[0]])])
+        
+        for (x1, y1, x2, y2, label, score) in all_boxes:
+            cv2.rectangle(img2, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(img2, f"{label}: {score}", (x1, y1+10), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 0), 1)
+
+        cv2.imshow("Multi-Template Matching", img2)
 
         if cv2.waitKey(2000) == ord("q"):
-                cv2.destroyAllWindows()
+            cv2.destroyAllWindows()
+            break
