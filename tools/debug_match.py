@@ -15,24 +15,11 @@ sys.path.insert(0, str(ROOT))
 
 from capture.adb import connect, grab_frame  # noqa: E402
 from vision.anchors import find_anchors  # noqa: E402
-
-TEMPLATE_DIR = ROOT / "templates" / "initial_collection"
-TEMPLATE_NAMES = ("attack", "attack-button", "find-match", "end-battle", "next-button")
-
-
-def load_templates() -> dict:
-    templates = {}
-    for name in TEMPLATE_NAMES:
-        path = TEMPLATE_DIR / f"{name}.png"
-        image = cv2.imread(str(path))
-        if image is None:
-            raise SystemExit(f"could not read template {path}")
-        templates[name] = image
-    return templates
+from vision.buttons import load_button_templates  # noqa: E402
 
 
 def main() -> None:
-    templates = load_templates()
+    templates = load_button_templates()
     device = connect()
 
     cv2.namedWindow("anchors", cv2.WINDOW_NORMAL)

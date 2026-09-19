@@ -4,6 +4,8 @@ Involves full capture -> vision -> control path in one command.
 
   python -m tools.tap_anchor attack --dry-run
   python -m tools.tap_anchor attack
+
+Options: attack, find-match, attack-button, next-button, end-battle
 """
 
 import argparse
@@ -16,8 +18,8 @@ sys.path.insert(0, str(ROOT))
 
 from capture.adb import connect, grab_frame  # noqa: E402
 from control.tap import tap_match  # noqa: E402
-from tools.debug_match import load_templates  # noqa: E402
 from vision.anchors import find_anchors  # noqa: E402
+from vision.buttons import load_button_templates  # noqa: E402
 
 SETTLE_SECONDS = 1.5
 
@@ -40,7 +42,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    templates = load_templates()
+    templates = load_button_templates()
     if args.label not in templates:
         raise SystemExit(f"unknown anchor '{args.label}'; known: {', '.join(sorted(templates))}")
 
