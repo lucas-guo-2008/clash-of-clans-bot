@@ -4,6 +4,7 @@ CLAUDE.md
 # local
 templates/digit_samples
 templates/initial_collection
+templates/unknown
 .DS_Store
 
 # Byte-compiled / optimized / DLL files

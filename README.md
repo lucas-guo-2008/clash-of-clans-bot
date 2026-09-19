@@ -5,23 +5,25 @@ come home, repeat. Runs against Clash of Clans in BlueStacks Air on macOS, drive
 
 ## What it does today
 
-It **reads**. It can capture the emulator screen, recognize which UI buttons are on it,
-read the loot panel into numbers, and tap a button it has located.
+It **navigates**. It captures the emulator screen, names which of four screens it is looking
+at, walks home → army → attack menu → scout → Next → Next → End Battle → home on its own, and
+reads the loot panel on every base it passes.
 
-It does not yet navigate on its own. **There is no `main.py` and no "run the bot" command** —
-the state machine that strings these pieces together is the next step. What exists is a set of
-tools you drive by hand.
+It does not yet attack. Loot is read and logged but never acted on, and no troops are deployed.
+**There is still no `main.py`** — the loop lives in `tools/navigate.py`, which is a check you
+run with an explicit gold budget, not a bot you leave running.
 
 | Phase | Status |
 |---|---|
 | 0 — Plumbing: ADB, capture, recorder, template tools, one tap | done |
-| 1 — Navigate: screen classifier + state machine | **next** |
+| 1 — Navigate: screen classifier + state machine | done |
 | 2 — Read loot | done |
-| 3 — Deploy troops | not started |
+| 3 — Deploy troops | **next** |
 | 4 — Building detection (YOLO) | not started |
 | 5 — Decision layer | not started |
 
-Phases 1 and 2 were done out of order, so the bot can read a base but not yet get to one.
+Phases 1 and 2 were done out of order: the loot reader came first, so the bot could read a base
+before it could reach one.
 
 ## Setup
 
@@ -44,7 +46,7 @@ Everything below runs from the repository root.
 
 ## Files you run
 
-All four live in `tools/`. Nothing in `capture/`, `control/`, `vision/` or `policy/` is run
+All six live in `tools/`. Nothing in `capture/`, `control/`, `vision/` or `policy/` is run
 directly — those are imported.
 
 | Command | What it does | Emulator? |
@@ -54,8 +56,29 @@ directly — those are imported.
 | `python -m tools.tap_anchor <label>` | Locate a named button, tap it, and report what changed on screen. `--dry-run` locates without tapping. | yes |
 | `python -m tools.extract_digits cut\|build` | Cut labelled digit glyphs from a frame, then vote them into `templates/digits/`. | no |
 | `python -m tools.read_loot <frames...>` | Read the loot panel from saved PNGs. `--expect G E D` turns it into a pass/fail assertion. | no |
+| `python -m tools.classify_screens <frames...>` | Name the screen in saved PNGs and print every template's score. `--expect` turns it into a pass/fail assertion. | no |
+| `python -m tools.navigate --max-nexts N` | Walk the whole navigation loop. `--max-nexts` is required. `--dry-run` classifies one screen without tapping. | yes |
 
 Known anchor labels: `attack`, `attack-button`, `find-match`, `end-battle`, `next-button`.
+
+## Screens
+
+Five anchors name four screens. `vision/screens.py` holds the rule table; first rule whose
+anchors are all present wins.
+
+| Screen | Anchor | Where it leads |
+|---|---|---|
+| `home` | `attack` | tap → army |
+| `army` | `attack-button` | tap → attack menu |
+| `attack_menu` | `find-match` | tap → costs 900, finds a base |
+| `scout` | `next-button`, `end-battle` | tap Next (900) or End Battle → home |
+| `unknown` | none | wait, then back, then give up |
+
+`unknown` covers two different things on purpose. The clouds between bases carry no buttons at
+all, and neither does an unrecognized popup, so they are indistinguishable by anchor set. The
+policy tells them apart by waiting: clouds clear on their own, a popup does not and earns the
+back press. That is why there is no "searching" template — the screen it would match is both
+brief and button-free.
 
 ## Workflows
 
@@ -109,6 +132,31 @@ python -m tools.tap_anchor attack             # tap, then diff the anchors befor
 If the named anchor isn't on screen, nothing is tapped and the exit code is non-zero. That
 refusal is deliberate: the bot does not tap screens it hasn't identified.
 
+### Run the navigation loop
+
+```bash
+python -m tools.navigate --max-nexts 2 --dry-run   # name one screen, tap nothing
+python -m tools.navigate --max-nexts 2             # walk the loop: 2700 gold
+```
+
+`--max-nexts` is required and has no default, because every Next and the Find a Match that
+starts the run cost 900 gold each; a run spends `900 × (1 + max-nexts)` and prints that before
+it moves. `--dry-run` reports a single step, since without taps the screen never changes — to
+check the classifier across the whole loop, drive the game by hand and run it once per screen.
+
+Exit 0 means it got home; non-zero means it gave up, and any frame it could not name is saved
+to `templates/unknown/` for you to look at.
+
+### Check the classifier offline
+
+```bash
+python -m tools.classify_screens templates/initial_collection/adb_frame_*.png \
+    --expect home attack_menu army scout
+```
+
+Prints every template's peak score on every frame, matched or not, then the gap between the
+lowest score accepted and the highest rejected. `THRESHOLD` belongs inside that gap.
+
 ## Project layout
 
 ```
@@ -117,7 +165,8 @@ vision/    pure functions: image in, findings out. No I/O, no ADB, no global sta
 control/   actions on the device: tap, swipe, back.
 policy/    what to do next. Thresholds now, the state machine later.
 tools/     scripts a human runs. Never imported by the bot.
-templates/ digits/ (tracked) plus digit_samples/ and initial_collection/ (gitignored bulk data)
+templates/ digits/ and buttons/ (tracked) plus digit_samples/, initial_collection/ and
+           unknown/ (gitignored bulk data)
 ```
 
 The "vision is pure" rule is load-bearing: it is what lets the entire loot reader be developed
@@ -132,12 +181,18 @@ Measured on this setup, 1920×1080:
 | Stage | Time | Rate |
 |---|---|---|
 | `capture.grab_frame` | ~185 ms | 5.4 fps |
-| `vision.anchors.find_anchors`, 5 templates, full frame | ~480 ms | 2.1 fps |
+| `vision.anchors.find_anchors`, 5 templates, full frame | ~465 ms | 2.2 fps |
+| `vision.screens.classify` | ~0.01 ms | negligible |
 | `vision.loot.read_loot` | ~0.6 ms | negligible |
 
-Base scanning needs 1–3 fps, so this is adequate — but anchor matching, not capture, is the
-bottleneck. Restricting each template to the region it can actually appear in is the obvious
-win when that starts to matter.
+One navigation step is a capture plus a match, about 0.65 s; naming the screen and reading the
+loot are free next to that. Base scanning needs 1–3 fps, so this is adequate — but anchor
+matching, not capture, is the bottleneck, and it grows linearly with each template added.
+Restricting each template to the region it can actually appear in is the obvious win when that
+starts to matter.
+
+The scout screen's `Battle starts in: 23s` is the deadline that makes this worth watching: if
+the bot dawdles there, the preview ends and it lands in a live battle it cannot yet name.
 
 ## Design notes
 
