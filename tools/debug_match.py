@@ -1,4 +1,4 @@
-"""Live overlay showing which UI anchors are matching, and how well.
+"""Live overlay showing which UI anchors are matching, and the score.
 
     python -m tools.debug_match
 
@@ -45,7 +45,7 @@ def main() -> None:
             )
 
         cv2.imshow("anchors", overlay)
-        if cv2.waitKey(250) & 0xFF in (ord("q"), 27):
+        if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
             break
 
     cv2.destroyAllWindows()

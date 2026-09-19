@@ -1,7 +1,7 @@
 """
 Useful for grabbing frames using ADB for template files.
 Open BlueStacks, run this file, enter a file prefix, and use 's' for save, 'q' to quit.
-Frames land in templates/initial_collection/<prefix>_<index>.png.
+Frames get saved to templates/initial_collection/<prefix>_<index>.png.
 """
 
 import sys

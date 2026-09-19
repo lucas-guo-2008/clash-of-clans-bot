@@ -20,14 +20,7 @@ def connect(serial: str = SERIAL) -> adbutils.AdbDevice:
 
 
 def grab_frame(device: adbutils.AdbDevice) -> np.ndarray:
-    """Capture the device screen as a BGR frame in device pixels (e.g. 1920x1080).
-
-    Reads the socket directly rather than using the buffered `shell(encoding=None)`
-    form, which measures ~540 ms per frame against ~176 ms here for byte-identical
-    output -- a 3x difference on an 8 MB transfer. `adb exec-out screencap` is a hair
-    faster still (~164 ms) but spawns a process per frame, which would give up the
-    persistent connection for about 7%.
-    """
+    """Capture the device screen as a BGR frame in device pixels (e.g. 1920x1080)."""
 
     conn = device.shell("screencap", stream=True)
     try:

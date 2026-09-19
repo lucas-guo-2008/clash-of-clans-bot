@@ -1,5 +1,5 @@
 """
-Name the screen in saved frames, offline, and show how much room THRESHOLD has because we want it between lowest score accepted and highest score rejected.
+Name the screen in saved frames, and show how much room THRESHOLD has because we want it between lowest score accepted and highest score rejected.
 
   python -m tools.classify_screens templates/initial_collection/adb_frame_*.png
   python -m tools.classify_screens templates/initial_collection/adb_frame_*.png --expect home attack_menu army scout
@@ -26,7 +26,7 @@ def main() -> None:
         "--expect",
         nargs="+",
         metavar="SCREEN",
-        help="one expected screen name per frame, in the same order",
+        help="one expected screen name per frame",
     )
     parser.add_argument(
         "--threshold",

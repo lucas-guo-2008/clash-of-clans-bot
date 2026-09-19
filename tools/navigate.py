@@ -4,7 +4,6 @@ Drive the navigation loop: home -> army -> attack menu -> scout -> Next... -> ho
   python -m tools.navigate --max-nexts 2 --dry-run
   python -m tools.navigate --max-nexts 2
 
-Makes no attack decisions. Loot is read on every scout screen and printed.
 --dry-run tag reports decisions but does not send the adb input.
 """
 
@@ -28,7 +27,7 @@ from vision.loot import read_loot  # noqa: E402
 from vision.screens import Screen, identify  # noqa: E402
 
 SETTLE_SECONDS = 1.5
-MAX_STEPS = 60  # runaway guard, not a spend: a 2-Next run takes roughly 20 steps
+MAX_STEPS = 60  # a 2-Next run takes roughly 20 steps
 UNKNOWN_DIR = ROOT / "templates" / "unknown"
 
 

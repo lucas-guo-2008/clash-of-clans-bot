@@ -1,14 +1,4 @@
-"""Actions on the device.
-
-adbutils drives input over the persistent connection, so nothing here shells out to
-`adb shell input`. Coordinates are device pixels, the same space capture returns and
-the same space every constant in the vision layer is measured in.
-
-The layer fails closed the way vision does: `tap_match` takes a Match that something
-actually found, never coordinates a caller guessed at. A caller holding no match taps
-nothing. Tapping a screen the bot has not identified is how a bot ends up spending gems
-or surrendering a battle.
-"""
+"""Functions for actions on the device (tap, swipe, back)."""
 
 import adbutils
 
@@ -45,10 +35,6 @@ def swipe(
 
 
 def back(device: adbutils.AdbDevice) -> None:
-    """Press the Android back button.
-
-    The recovery primitive: an unrecognized screen gets a back press and a re-classify,
-    rather than a handler per popup.
-    """
+    """Press the Android back button."""
 
     device.keyevent(BACK)

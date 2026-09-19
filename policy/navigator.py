@@ -37,7 +37,7 @@ class Progress:
 
 
 def decide(screen: Screen, progress: Progress) -> Action:
-    """Making bad decisions"""
+    """Making bad decisions. Given a screen and progress, return an action."""
     if screen is Screen.HOME:
         if progress.searched:
             return Action(DONE, why="home again, run complete")
@@ -64,6 +64,7 @@ def decide(screen: Screen, progress: Progress) -> Action:
 
 
 def advance(progress: Progress, action: Action) -> Progress:
+    """More bad decisions. Given the previous progress and an action taken, return an updated progress object."""
     if action.kind in (WAIT, BACK):
         return replace(progress, unknown_streak=progress.unknown_streak + 1)
     if action.anchor == "find-match":
