@@ -1,7 +1,9 @@
 """Hmmm...what to do? Uses the current screen from vision."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
+from policy.thresholds import should_attack
+from vision.loot import LootReading
 from vision.screens import Screen
 
 # How many unrecognized windows to allow before exiting
@@ -13,7 +15,7 @@ MAX_BACKS = 3
 TAP = "tap"
 BACK = "back"
 WAIT = "wait"
-DONE = "done"
+DEPLOY = "deploy"
 ABORT = "abort"
 
 
@@ -24,23 +26,11 @@ class Action:
     why: str = ""
 
 
-@dataclass(frozen=True)
-class Progress:
-    max_nexts: int
-    nexts_used: int = 0
-    unknown_streak: int = 0
-    searched: bool = False  # a Find a Match has been paid for this run
+def decide(screen: Screen, reading: LootReading | None, unknown_streak: int) -> Action:
+    """Making bad decisions. Given a screen, the loot showing on it, and how long we have
+    been lost, return an action."""
 
-    @property
-    def budget_spent(self) -> bool:
-        return self.nexts_used >= self.max_nexts
-
-
-def decide(screen: Screen, progress: Progress) -> Action:
-    """Making bad decisions. Given a screen and progress, return an action."""
     if screen is Screen.HOME:
-        if progress.searched:
-            return Action(DONE, why="home again, run complete")
         return Action(TAP, "attack", "open the army screen")
 
     if screen is Screen.ARMY:
@@ -50,25 +40,15 @@ def decide(screen: Screen, progress: Progress) -> Action:
         return Action(TAP, "find-match", "spend 900 to find a base")
 
     if screen is Screen.SCOUT:
-        if progress.budget_spent:
-            return Action(TAP, "end-battle", "budget spent, leaving without attacking")
-        spend = f"{progress.nexts_used + 1}/{progress.max_nexts}"
-        return Action(TAP, "next-button", f"spend 900 on the next base ({spend})")
+        # No reading, or one we could not trust, skips the base: a wasted 900 is far
+        # cheaper than an army spent on loot that was guessed at.
+        if reading is not None and should_attack(reading):
+            return Action(DEPLOY, why="loot clears the thresholds")
+        return Action(TAP, "next-button", "spend 900 on the next base")
 
-    if progress.unknown_streak < PATIENCE:
-        waited = f"{progress.unknown_streak + 1}/{PATIENCE}"
+    if unknown_streak < PATIENCE:
+        waited = f"{unknown_streak + 1}/{PATIENCE}"
         return Action(WAIT, why=f"unrecognized, waiting for clouds to clear ({waited})")
-    if progress.unknown_streak < PATIENCE + MAX_BACKS:
+    if unknown_streak < PATIENCE + MAX_BACKS:
         return Action(BACK, why="still unrecognized, pressing back")
-    return Action(ABORT, why=f"unrecognized for {progress.unknown_streak} frames, giving up")
-
-
-def advance(progress: Progress, action: Action) -> Progress:
-    """More bad decisions. Given the previous progress and an action taken, return an updated progress object."""
-    if action.kind in (WAIT, BACK):
-        return replace(progress, unknown_streak=progress.unknown_streak + 1)
-    if action.anchor == "find-match":
-        return replace(progress, searched=True, unknown_streak=0)
-    if action.anchor == "next-button":
-        return replace(progress, nexts_used=progress.nexts_used + 1, unknown_streak=0)
-    return replace(progress, unknown_streak=0)
+    return Action(ABORT, why=f"unrecognized for {unknown_streak} frames, giving up")

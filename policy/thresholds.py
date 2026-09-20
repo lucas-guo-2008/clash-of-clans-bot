@@ -6,13 +6,14 @@ MIN_GOLD = 400_000
 MIN_ELIXIR = 400_000
 MIN_DARK = 2_000
 
-"""Returns whether a base is worth attacking"""
+
 def should_attack(
     reading: LootReading,
     min_gold: int = MIN_GOLD,
     min_elixir: int = MIN_ELIXIR,
     min_dark: int = MIN_DARK,
 ) -> bool:
+    """Returns whether a base is worth attacking."""
 
     if not reading.ok:
         return False
