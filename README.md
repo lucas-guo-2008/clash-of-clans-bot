@@ -21,4 +21,11 @@ Start the emulator with Clash of Clans running, then connect:
 adb connect 127.0.0.1:5555
 ```
 
-Entry points live in `tools/`, each with its own `--help`.
+Then run the bot:
+
+```bash
+.venv/bin/python main.py --dry-run   # name the screen it is looking at, tap nothing
+.venv/bin/python main.py             # farm until Ctrl-C
+```
+
+Supporting scripts a human runs live in `tools/`, each with its own `--help`.
