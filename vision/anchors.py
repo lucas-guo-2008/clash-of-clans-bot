@@ -42,11 +42,7 @@ def peak_scores(frame: np.ndarray, templates: dict[str, np.ndarray]) -> dict[str
     return peaks
 
 
-def find_anchors(
-    frame: np.ndarray,
-    templates: dict[str, np.ndarray],
-    threshold: float = THRESHOLD,
-) -> list[Match]:
+def find_anchors(frame: np.ndarray, templates: dict[str, np.ndarray]) -> dict[str, Match]:
     """Find every template that appears in the frame, one match per label."""
 
-    return [match for match in peak_scores(frame, templates).values() if match.score >= threshold]
+    return {label: match for label, match in peak_scores(frame, templates).items() if match.score >= THRESHOLD}

@@ -15,26 +15,25 @@ class Screen(Enum):
     UNKNOWN = "unknown"
 
 
-# First rule whose anchors are all present wins, so the order is the tie-breaker.
-RULES: tuple[tuple[Screen, frozenset[str]], ...] = (
-    (Screen.SCOUT, frozenset({"next-button"})),
-    (Screen.ATTACK_MENU, frozenset({"find-match"})),
-    (Screen.ARMY, frozenset({"attack-button"})),
-    (Screen.HOME, frozenset({"attack"})),
+# First rule whose anchor is present wins, so the order is the tie-breaker.
+RULES: tuple[tuple[Screen, str], ...] = (
+    (Screen.SCOUT, "next-button"),
+    (Screen.ATTACK_MENU, "find-match"),
+    (Screen.ARMY, "attack-button"),
+    (Screen.HOME, "attack"),
 )
 
 
-def classify(matches: list[Match]) -> Screen:
+def classify(matches: dict[str, Match]) -> Screen:
     """Name the screen these anchors belong to."""
 
-    found = {match.label for match in matches}
-    for screen, required in RULES:
-        if required <= found:
+    for screen, anchor in RULES:
+        if anchor in matches:
             return screen
     return Screen.UNKNOWN
 
 
-def identify(frame: np.ndarray, templates: dict[str, np.ndarray]) -> tuple[Screen, list[Match]]:
+def identify(frame: np.ndarray, templates: dict[str, np.ndarray]) -> tuple[Screen, dict[str, Match]]:
     """Locate every anchor in a frame and name the screen."""
 
     matches = find_anchors(frame, templates)
