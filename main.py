@@ -33,7 +33,7 @@ UNKNOWN_DIR = ROOT / "templates" / "unknown"
 def describe(matches) -> str:
     if not matches:
         return "(no anchors)"
-    return " ".join(f"{m.label}:{m.score:.3f}" for m in sorted(matches, key=lambda m: -m.score))
+    return " ".join(f"{m.label}:{m.score:.3f}" for m in sorted(matches.values(), key=lambda m: -m.score))
 
 
 def describe_loot(reading: LootReading) -> str:
@@ -78,13 +78,8 @@ def main() -> int:
             print(f"        saved {save_unknown(frame).relative_to(ROOT)}")
 
         if args.dry_run:
-            if action.kind != TAP:
-                return 0
-            match = next((m for m in matches if m.label == action.anchor), None)
-            if match is None:
-                print(f"        {action.anchor} is NOT on screen -- a live run would stop here", file=sys.stderr)
-                return 1
-            print(f"        would tap {action.anchor} at {match.centre}")
+            if action.kind == TAP:
+                print(f"        would tap {action.anchor} at {matches[action.anchor].centre}")
             return 0
 
         if action.kind == DEPLOY:
@@ -97,18 +92,13 @@ def main() -> int:
             return 1
 
         if action.kind == TAP:
-            match = next((m for m in matches if m.label == action.anchor), None)
-            if match is None:
-                print(f"\n{action.anchor} is not on screen -- nothing tapped", file=sys.stderr)
-                return 1
-            tap_match(device, match)
+            # Always present: every TAP targets the anchor that named the screen.
+            tap_match(device, matches[action.anchor])
         elif action.kind == BACK:
             back(device)
 
         unknown_streak = unknown_streak + 1 if action.kind in (WAIT, BACK) else 0
         time.sleep(SETTLE_SECONDS)
-
-    return 0
 
 
 if __name__ == "__main__":
