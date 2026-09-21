@@ -28,16 +28,9 @@ def main() -> None:
         metavar=("GOLD", "ELIXIR", "DARK"),
         help="assert the reading matches these values (single frame only)",
     )
-    parser.add_argument(
-        "--allow-partial",
-        action="store_true",
-        help="run with an incomplete template set, for bootstrapping",
-    )
     args = parser.parse_args()
 
-    templates = load_digit_templates(allow_partial=args.allow_partial)
-    if len(templates) < 10:
-        print(f"warning: template set is incomplete ({''.join(sorted(templates))})\n", file=sys.stderr)
+    templates = load_digit_templates()
 
     failures = 0
     for path in args.frames:
@@ -47,7 +40,7 @@ def main() -> None:
 
         reading = read_loot(frame, templates)
         status = "ok" if reading.ok else "REJECTED"
-        print(f"{path} [{status}] confidence={round(reading.confidence, 3)}")
+        print(f"{path} [{status}]")
         for name, row in zip(ROW_NAMES, reading.rows):
             scores = f"min score {round(min(row.scores), 3)}" if row.scores else "-"
             detail = row.reason or scores
@@ -62,7 +55,7 @@ def main() -> None:
                 print(f"   FAILED: expected {want}, got {got}")
                 failures += 1
 
-    sys.exit(0)
+    sys.exit(1 if failures else 0)
 
 
 if __name__ == "__main__":

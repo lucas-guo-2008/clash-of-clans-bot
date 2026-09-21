@@ -28,12 +28,6 @@ def main() -> None:
         metavar="SCREEN",
         help="one expected screen name per frame",
     )
-    parser.add_argument(
-        "--threshold",
-        type=float,
-        default=THRESHOLD,
-        help=f"override the match threshold for this run (default {THRESHOLD})",
-    )
     args = parser.parse_args()
 
     if args.expect and len(args.expect) != len(args.frames):
@@ -56,7 +50,7 @@ def main() -> None:
             raise SystemExit(f"could not read {path}")
 
         peaks = peak_scores(frame, templates)
-        matches = [m for m in peaks.values() if m.score >= args.threshold]
+        matches = {label: m for label, m in peaks.items() if m.score >= THRESHOLD}
         screen = classify(matches)
 
         verdict = ""
@@ -69,11 +63,11 @@ def main() -> None:
 
         print(f"{path}  ->  {screen.value}{verdict}")
         for label, match in sorted(peaks.items(), key=lambda kv: -kv[1].score):
-            hit = match.score >= args.threshold
+            hit = match.score >= THRESHOLD
             (accepted if hit else rejected).append((match.score, f"{label} on {path.name}"))
             print(f"    {label:<14} {match.score:.3f}  {'match' if hit else ''}")
 
-    print(f"\nthreshold {args.threshold}")
+    print(f"\nthreshold {THRESHOLD}")
     if accepted:
         score, where = min(accepted)
         print(f"  lowest accepted   {score:.3f}   {where}")
