@@ -11,12 +11,12 @@ HEADER_SIZE = 16
 CHUNK_SIZE = 1 << 20
 
 
-def connect(serial: str = SERIAL) -> adbutils.AdbDevice:
+def connect() -> adbutils.AdbDevice:
     """Open a persistent connection to the emulator."""
 
     client = adbutils.AdbClient(host="127.0.0.1", port=5037)
-    client.connect(serial)
-    return client.device(serial)
+    client.connect(SERIAL)
+    return client.device(SERIAL)
 
 
 def grab_frame(device: adbutils.AdbDevice) -> np.ndarray:

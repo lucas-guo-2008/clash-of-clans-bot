@@ -6,15 +6,15 @@ import cv2
 import numpy as np
 
 BUTTONS = ("attack", "attack-button", "find-match", "next-button", "end-battle")
-DEFAULT_DIR = Path(__file__).resolve().parent.parent / "templates" / "buttons"
+BUTTONS_DIR = Path(__file__).resolve().parent.parent / "templates" / "buttons"
 
 
-def load_button_templates(directory: Path = DEFAULT_DIR) -> dict[str, np.ndarray]:
+def load_button_templates() -> dict[str, np.ndarray]:
     """Load every anchor template as a BGR image, keyed by label."""
 
     templates = {}
     for name in BUTTONS:
-        path = directory / f"{name}.png"
+        path = BUTTONS_DIR / f"{name}.png"
         image = cv2.imread(str(path))
         if image is None:
             raise FileNotFoundError(

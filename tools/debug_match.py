@@ -30,7 +30,7 @@ def main() -> None:
         frame = grab_frame(device)
         overlay = frame.copy()
 
-        for match in find_anchors(frame, templates):
+        for match in find_anchors(frame, templates).values():
             cv2.rectangle(
                 overlay, (match.x, match.y), (match.x + match.w, match.y + match.h), (0, 255, 0), 2
             )
