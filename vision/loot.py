@@ -35,7 +35,6 @@ MIN_SCORE = 0.93
 MIN_MARGIN = 0.05
 
 # Need to change this during resource events
-MAX_DIGITS = 7
 PLAUSIBLE_MAX = (2_500_000, 2_500_000, 100_000)
 
 
@@ -59,9 +58,7 @@ class RowRead:
     """Outcome of reading one loot row, including per-glyph scores for logging."""
 
     value: int | None
-    digits: str
     scores: tuple[float, ...]
-    margins: tuple[float, ...]
     reason: str | None  # None when the row read cleanly
 
     @property
@@ -74,7 +71,6 @@ class LootReading:
     gold: int | None
     elixir: int | None
     dark_elixir: int | None
-    confidence: float
     ok: bool
     rows: tuple[RowRead, RowRead, RowRead]
 
@@ -135,13 +131,13 @@ def _shift(canvas: np.ndarray, dy: int, dx: int) -> np.ndarray:
     return out
 
 
-def best_agreement(canvas: np.ndarray, template: np.ndarray, max_shift: int = MAX_SHIFT) -> float:
+def best_agreement(canvas: np.ndarray, template: np.ndarray) -> float:
     """Find agreement which allows the glyph to be off by a pixel or two."""
 
     return max(
         float((_shift(canvas, dy, dx) == template).mean())
-        for dy in range(-max_shift, max_shift + 1)
-        for dx in range(-max_shift, max_shift + 1)
+        for dy in range(-MAX_SHIFT, MAX_SHIFT + 1)
+        for dx in range(-MAX_SHIFT, MAX_SHIFT + 1)
     )
 
 
@@ -182,9 +178,7 @@ def parse_row(row_mask: np.ndarray, templates: dict[str, np.ndarray]) -> RowRead
 
     glyphs = segment_glyphs(row_mask)
     if not glyphs:
-        return RowRead(None, "", (), (), "no glyphs")
-    if len(glyphs) > MAX_DIGITS:
-        return RowRead(None, "", (), (), f"{len(glyphs)} glyphs > max {MAX_DIGITS}")
+        return RowRead(None, (), "no glyphs")
 
     digits, scores, margins = "", [], []
     for glyph in glyphs:
@@ -193,18 +187,18 @@ def parse_row(row_mask: np.ndarray, templates: dict[str, np.ndarray]) -> RowRead
         scores.append(score)
         margins.append(margin)
 
-    scores, margins = tuple(scores), tuple(margins)
+    scores = tuple(scores)
 
     if min(scores) < MIN_SCORE:
-        return RowRead(None, digits, scores, margins, f"low score {min(scores):.3f}")
+        return RowRead(None, scores, f"low score {min(scores):.3f}")
     if min(margins) < MIN_MARGIN:
-        return RowRead(None, digits, scores, margins, f"low margin {min(margins):.3f}")
+        return RowRead(None, scores, f"low margin {min(margins):.3f}")
 
     sizes = group_sizes(glyphs)
     if not grouping_is_valid(sizes):
-        return RowRead(None, digits, scores, margins, f"bad grouping {sizes}")
+        return RowRead(None, scores, f"bad grouping {sizes}")
 
-    return RowRead(int(digits), digits, scores, margins, None)
+    return RowRead(int(digits), scores, None)
 
 
 def read_loot(frame: np.ndarray, templates: dict[str, np.ndarray]) -> LootReading:
@@ -218,12 +212,6 @@ def read_loot(frame: np.ndarray, templates: dict[str, np.ndarray]) -> LootReadin
 
     x0, x1 = LOOT_X
     rows = tuple(parse_row(binarize(frame[y0:y1, x0:x1]), templates) for y0, y1 in ROW_BANDS)
-    gold, elixir, dark = rows
-
-    # No Dark elixir below TH7
-    if dark.reason == "no glyphs" and gold.ok and elixir.ok:
-        dark = RowRead(0, "", (), (), None)
-        rows = (gold, elixir, dark)
 
     values = [row.value for row in rows]
     ok = all(row.ok for row in rows)
@@ -231,14 +219,10 @@ def read_loot(frame: np.ndarray, templates: dict[str, np.ndarray]) -> LootReadin
         if value is not None and value > ceiling:
             ok = False
 
-    all_scores = [score for row in rows for score in row.scores]
-    confidence = min(all_scores) if all_scores else 0.0
-
     return LootReading(
         gold=values[0] if ok else None,
         elixir=values[1] if ok else None,
         dark_elixir=values[2] if ok else None,
-        confidence=confidence,
         ok=ok,
         rows=rows,
     )
