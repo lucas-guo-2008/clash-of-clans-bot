@@ -18,8 +18,8 @@ from pathlib import Path
 import cv2
 
 from capture.adb import connect, grab_frame
-from control.tap import back, tap_match
-from policy.navigator import ABORT, BACK, DEPLOY, TAP, WAIT, decide
+from control.tap import tap_match
+from policy.navigator import ABORT, DEPLOY, TAP, decide
 from vision.buttons import load_button_templates
 from vision.glyphs import load_digit_templates
 from vision.loot import LootReading, read_loot
@@ -94,10 +94,10 @@ def main() -> int:
         if action.kind == TAP:
             # Always present: every TAP targets the anchor that named the screen.
             tap_match(device, matches[action.anchor])
-        elif action.kind == BACK:
-            back(device)
 
-        unknown_streak = unknown_streak + 1 if action.kind in (WAIT, BACK) else 0
+        # Count what was seen, not what was done: a recognized screen that answers WAIT
+        # must not use up the patience reserved for unrecognized ones.
+        unknown_streak = unknown_streak + 1 if screen is Screen.UNKNOWN else 0
         time.sleep(SETTLE_SECONDS)
 
 

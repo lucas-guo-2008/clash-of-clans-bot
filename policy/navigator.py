@@ -6,14 +6,12 @@ from policy.thresholds import should_attack
 from vision.loot import LootReading
 from vision.screens import Screen
 
-# How many unrecognized windows to allow before exiting
-PATIENCE = 4
-
-# Random popups may require backs so we allow up to this many
-MAX_BACKS = 3
+# How many unrecognized frames in a row to wait out before exiting. Waiting is the only
+# recovery: clouds clear on their own, and a back press mid-search or mid-battle does harm.
+# Counted in loop steps, not seconds -- the longest cloud seen live lasted 4.
+PATIENCE = 8
 
 TAP = "tap"
-BACK = "back"
 WAIT = "wait"
 DEPLOY = "deploy"
 ABORT = "abort"
@@ -49,6 +47,4 @@ def decide(screen: Screen, reading: LootReading | None, unknown_streak: int) -> 
     if unknown_streak < PATIENCE:
         waited = f"{unknown_streak + 1}/{PATIENCE}"
         return Action(WAIT, why=f"unrecognized, waiting for clouds to clear ({waited})")
-    if unknown_streak < PATIENCE + MAX_BACKS:
-        return Action(BACK, why="still unrecognized, pressing back")
     return Action(ABORT, why=f"unrecognized for {unknown_streak} frames, giving up")

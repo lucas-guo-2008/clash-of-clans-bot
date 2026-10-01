@@ -1,1 +1,1 @@
-"""Control layer: actions on the device via ADB (tap, back)."""
+"""Control layer: actions on the device via ADB (tap)."""
