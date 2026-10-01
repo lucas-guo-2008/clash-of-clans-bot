@@ -44,6 +44,13 @@ def decide(screen: Screen, reading: LootReading | None, unknown_streak: int) -> 
             return Action(DEPLOY, why="loot clears the thresholds")
         return Action(TAP, "next-button", "spend 900 on the next base")
 
+    if screen is Screen.BATTLE:
+        # Never end a battle early: the game ends it when the last troop dies or time runs out.
+        return Action(WAIT, why="battle in progress")
+
+    if screen is Screen.RESULT:
+        return Action(TAP, "return-home", "battle over, return home")
+
     if unknown_streak < PATIENCE:
         waited = f"{unknown_streak + 1}/{PATIENCE}"
         return Action(WAIT, why=f"unrecognized, waiting for clouds to clear ({waited})")
