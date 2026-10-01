@@ -5,7 +5,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-BUTTONS = ("attack", "attack-button", "find-match", "next-button", "end-battle")
+BUTTONS = ("attack", "attack-button", "find-match", "next-button", "end-battle", "surrender", "return-home")
 BUTTONS_DIR = Path(__file__).resolve().parent.parent / "templates" / "buttons"
 
 
