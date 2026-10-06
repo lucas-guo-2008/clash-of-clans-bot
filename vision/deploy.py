@@ -10,6 +10,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from vision.anchors import Match
+
 FRAME_SIZE = (1080, 1920)  # (h, w)
 
 # The outline is a 2 px alpha-blended red line; thinner than kernal drops red decor
@@ -36,6 +38,10 @@ UI_RECTS = (
     (1560, 680, 1920, 870),  # Next
     (0, 870, 1920, 1080),  # troop deck
 )
+
+DECK_Y = (888, 1072)
+CARD_BRIGHT = 100
+CARD_FILL = 0.55  # fraction of a column's band pixels that are bright
 
 
 @dataclass(frozen=True)
@@ -100,3 +106,23 @@ def deploy_points(frame: np.ndarray) -> list[DeployPoint]:
     if len(found) <= MAX_POINTS:
         return found
     return [found[i] for i in np.linspace(0, len(found) - 1, MAX_POINTS).astype(int)]
+
+
+def first_card(frame: np.ndarray) -> Match | None:
+    """The leftmost card in the troop deck, or None when it is not where a card should be."""
+
+    y0, y1 = DECK_Y
+    fill = (frame[y0:y1].max(axis=2) > CARD_BRIGHT).mean(axis=0)
+    columns = np.flatnonzero(fill > CARD_FILL)
+    if columns.size == 0:
+        return None
+
+    # The first run of consecutive bright columns.
+    gaps = np.flatnonzero(np.diff(columns) > 1)
+    left, right = columns[0], columns[gaps[0]] if gaps.size else columns[-1]
+    width = int(right - left + 1)
+
+    if not (100 <= width <= 170):
+        return None
+
+    return Match("card", int(left), y0, width, y1 - y0, float(fill[left : right + 1].mean()))
