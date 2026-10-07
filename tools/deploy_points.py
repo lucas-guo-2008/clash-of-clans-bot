@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from vision.deploy import UI_RECTS, deploy_points, first_card, outline_lines, outline_mask  # noqa: E402
+from vision.overlay import draw_deploy  # noqa: E402
 
 
 def main() -> None:
@@ -35,13 +36,9 @@ def main() -> None:
 
         if args.show:
             overlay = frame.copy()
-            overlay[outline_lines(outline_mask(frame)) > 0] = (255, 0, 255)
             for x0, y0, x1, y1 in UI_RECTS:
                 cv2.rectangle(overlay, (x0, y0), (x1, y1), (128, 128, 128), 2)
-            for p in points:
-                cv2.circle(overlay, (p.x, p.y), 12, (255, 255, 0), 3)
-            if card:
-                cv2.rectangle(overlay, (card.x, card.y), (card.x + card.w, card.y + card.h), (0, 255, 0), 3)
+            draw_deploy(overlay, outline_lines(outline_mask(frame)), points, card)
             cv2.namedWindow("deploy points", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("deploy points", 960, 540)
             cv2.imshow("deploy points", overlay)

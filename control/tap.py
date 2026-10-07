@@ -3,6 +3,7 @@
 import adbutils
 
 from vision.anchors import Match
+from vision.deploy import DeployPoint
 
 
 def tap_match(device: adbutils.AdbDevice, match: Match) -> None:
@@ -10,3 +11,9 @@ def tap_match(device: adbutils.AdbDevice, match: Match) -> None:
 
     x, y = match.centre
     device.click(x, y)
+
+
+def tap_point(device: adbutils.AdbDevice, point: DeployPoint) -> None:
+    """Drop a troop on a deploy point found on a frame."""
+
+    device.click(point.x, point.y)

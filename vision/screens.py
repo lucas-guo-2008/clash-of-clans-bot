@@ -2,9 +2,7 @@
 
 from enum import Enum
 
-import numpy as np
-
-from vision.anchors import Match, find_anchors
+from vision.anchors import Match
 
 
 class Screen(Enum):
@@ -37,9 +35,3 @@ def classify(matches: dict[str, Match]) -> Screen:
             return screen
     return Screen.UNKNOWN
 
-
-def identify(frame: np.ndarray, templates: dict[str, np.ndarray]) -> tuple[Screen, dict[str, Match]]:
-    """Locate every anchor in a frame and name the screen."""
-
-    matches = find_anchors(frame, templates)
-    return classify(matches), matches
