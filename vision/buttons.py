@@ -10,7 +10,7 @@ BUTTONS_DIR = Path(__file__).resolve().parent.parent / "templates" / "buttons"
 FRAME_W, FRAME_H = 1920, 1080
 
 BUTTON_AT = {
-    "attack": (32, 900),
+    "attack": (57, 1006),  # "Attack!" lettering only: the map icon above it changes pose
     "attack-button": (1516, 926),
     "find-match": (112, 734),
     "next-button": (1599, 703),

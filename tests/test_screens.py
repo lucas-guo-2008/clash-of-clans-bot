@@ -11,6 +11,8 @@ SCREENS = {
     4: "scout", 5: "scout", 6: "scout", 7: "battle", 8: "result",
     9: "battle",  # the scout timer ran out with no troop down: End Battle, no Next
     **{n: "scout" for n in range(10, 18)},
+    **{n: "result" for n in range(18, 23)},
+    23: "home",  # the Attack! map icon in a different pose from frame 1; the old whole-button template scored 0.763
 }
 
 UNRECOGNIZED = [
