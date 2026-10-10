@@ -24,7 +24,7 @@ from control.tap import tap_match, tap_point
 from policy.navigator import ABORT, DEPLOY, PATIENCE, TAP, Action, decide
 from vision.anchors import THRESHOLD, Match, peak_scores
 from vision.buttons import load_button_templates
-from vision.deploy import DeployPoint, deploy_points, first_card, outline_lines, outline_mask
+from vision.deploy import DeployPoint, deck_slots, deploy_points, outline_lines, outline_mask
 from vision.glyphs import load_digit_templates
 from vision.loot import LootReading, read_loot
 from vision.overlay import CYAN, GREEN, GREY, RED, WHITE, draw_anchors, draw_deploy, draw_tap, with_header
@@ -37,7 +37,14 @@ UNKNOWN_DIR = ROOT / "templates" / "unknown"
 WINDOW = "bot"
 
 ITERATIONS = 1
-TROOPS = 24  # in the first card; slot and count detection come later
+# The army, slot by slot left to right, as (kind, count). Slots are found on screen; only
+# what is in them is declared here, so reordering the army means editing this line.
+#   troop: tap the card, then `count` drops cycling the deploy points
+#   hero:  tap the card, one drop; the ability fires HERO_ABILITY_DELAY s later (card tapped again)
+#   spell: located but not cast -- aiming waits for building detection (Phase 4/5)
+#   skip:  not deployed (the Balloon card)
+DECK = (("troop", 24), ("skip", 0), ("hero", 1), ("hero", 1), ("spell", 11))
+HERO_ABILITY_DELAY = 10.0
 SEARCH_COST = 900
 
 
@@ -58,6 +65,23 @@ def run_summary(looted: tuple[int, int, int], searches: int, minutes: float) -> 
     return f"run: looted {looted[0]} gold, {looted[1]} elixir, {looted[2]} dark elixir across {searches} search{'es' if searches != 1 else ''} in {minutes:.1f} min"
 
 
+def deploy_army(device, slots: list[Match], points: list[DeployPoint]) -> list[Match]:
+    """Drop every troop and hero card left to right, cycling the deploy points.
+    Returns the hero cards, for the ability tap later."""
+
+    drops = itertools.cycle(points)
+    heroes = []
+    for slot, (kind, count) in zip(slots, DECK):
+        if kind not in ("troop", "hero"):
+            continue
+        tap_match(device, slot)
+        for _ in range(count):
+            tap_point(device, next(drops))
+        if kind == "hero":
+            heroes.append(slot)
+    return heroes
+
+
 def save_unknown(frame) -> Path:
     UNKNOWN_DIR.mkdir(parents=True, exist_ok=True)
     out = UNKNOWN_DIR / f"unknown_{datetime.now():%Y%m%d_%H%M%S_%f}.png"
@@ -72,7 +96,7 @@ def show(
     action: Action,
     peaks: dict[str, Match],
     reading: LootReading | None,
-    card: Match | None,
+    slots: list[Match],
     points: list[DeployPoint],
     tap: tuple[int, int] | None,
     unknown_streak: int,
@@ -82,7 +106,8 @@ def show(
 
     image = frame.copy()
     if screen is Screen.SCOUT:
-        draw_deploy(image, outline_lines(outline_mask(frame)), points, card)
+        labels = [(slot, f"{slot.label} {kind} x{count}") for slot, (kind, count) in zip(slots, DECK)]
+        draw_deploy(image, outline_lines(outline_mask(frame)), points, labels)
     draw_anchors(image, peaks, THRESHOLD)
     if tap is not None:
         draw_tap(image, tap)
@@ -94,7 +119,7 @@ def show(
     if reading is not None:
         status.append((describe_loot(reading), GREEN if reading.ok else RED))
     if screen is Screen.SCOUT:
-        status.append((f"{len(points)} deploy points, {'card' if card else 'NO card'}", CYAN))
+        status.append((f"{len(points)} deploy points, {len(slots)}/{len(DECK)} cards", CYAN))
 
     rows = [
         [(f"step {step}", WHITE), (screen.value.upper(), RED if screen is Screen.UNKNOWN else GREEN),
@@ -132,6 +157,8 @@ def main() -> int:
     unknown_streak = 0
     battles = 0
     previous = None
+    heroes: list[Match] = []  # deployed hero cards whose ability has not been used yet
+    ability_at = 0.0
     looted = (0, 0, 0)  # gold, elixir, dark elixir over every readable result
     searches = 0
     started = time.monotonic()
@@ -172,21 +199,20 @@ def main() -> int:
         if screen is Screen.UNKNOWN:
             print(f"        saved {save_unknown(frame).relative_to(ROOT)}")
 
-        card, points = None, []
+        slots, points = [], []
         if screen is Screen.SCOUT and (args.show or action.kind == DEPLOY):
-            card, points = first_card(frame), deploy_points(frame)
+            slots, points = deck_slots(frame), deploy_points(frame)
         if action.kind == DEPLOY:
-            found = f"card at {card.centre}" if card else "no card"
-            print(f"        {found}, {len(points)} deploy points")
+            print(f"        {len(slots)}/{len(DECK)} deck cards, {len(points)} deploy points")
 
         tap = None
         if action.kind == TAP:
             tap = matches[action.anchor].centre
-        elif action.kind == DEPLOY and card is not None and points:
-            tap = card.centre
+        elif action.kind == DEPLOY and slots and points:
+            tap = slots[0].centre
 
         if args.show:
-            show(frame, step, screen, action, peaks, reading, card, points, tap, unknown_streak, battles)
+            show(frame, step, screen, action, peaks, reading, slots, points, tap, unknown_streak, battles)
 
         if args.dry_run:
             if tap is not None:
@@ -204,12 +230,24 @@ def main() -> int:
             if action.anchor in ("find-match", "next-button"):
                 searches += 1
         elif action.kind == DEPLOY:
-            if card is None or not points:
-                print("        nothing to tap on this frame, retrying")
+            if not points:
+                print("        no deploy points on this frame, retrying")
+            elif len(slots) != len(DECK):
+                # Retrying would not change the deck: DECK no longer describes the army.
+                print(f"\ndeck shows {len(slots)} cards but DECK lists {len(DECK)} -- update DECK in main.py",
+                      file=sys.stderr)
+                return 1
             else:
-                tap_match(device, card)
-                for point in itertools.islice(itertools.cycle(points), TROOPS):
-                    tap_point(device, point)
+                heroes = deploy_army(device, slots, points)
+                ability_at = time.monotonic() + HERO_ABILITY_DELAY
+
+        if screen is Screen.BATTLE and heroes and time.monotonic() >= ability_at:
+            for hero in heroes:
+                tap_match(device, hero)
+            print(f"        hero abilities: tapped {len(heroes)} hero card(s)")
+            heroes = []
+        if screen is Screen.RESULT:
+            heroes = []  # battle over; an unused ability never carries into the next one
 
         unknown_streak = unknown_streak + 1 if screen is Screen.UNKNOWN else 0
         if not pause(SETTLE_SECONDS, args.show):

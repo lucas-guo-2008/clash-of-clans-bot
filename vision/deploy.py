@@ -39,9 +39,16 @@ UI_RECTS = (
     (0, 870, 1920, 1080),  # troop deck
 )
 
-DECK_Y = (888, 1072)
-CARD_BRIGHT = 100
-CARD_FILL = 0.55  # fraction of a column's band pixels that are bright
+# Deck slots are found by their outlines, not their art (hero art is dark, spell art is
+# white): a card's left and right borders are vertical edges over most of its height, and
+# real cards are 130-134 px wide, 139 when raised as the selected card.
+DECK_Y = (888, 1072)  # the reported card box; its centre is where a card is tapped
+EDGE_Y = (900, 1055)  # inside the card body, clear of the rounded corners
+EDGE_STEP = 40  # grey-level change across 2 px that counts as an edge
+EDGE_FILL = 0.6  # fraction of EDGE_Y rows that must be edge for a column to be a border
+SLOT_W = (125, 140)  # 140 rejects a home-screen pair at 143-144 and a stray edge on frame 7
+DECK_LEFT = (120, 170)  # the first card's left border: 134-148 measured
+SLOT_GAP = 45  # most blank px between neighbouring cards: 13-31 measured
 
 
 @dataclass(frozen=True)
@@ -108,21 +115,33 @@ def deploy_points(frame: np.ndarray) -> list[DeployPoint]:
     return [found[i] for i in np.linspace(0, len(found) - 1, MAX_POINTS).astype(int)]
 
 
-def first_card(frame: np.ndarray) -> Match | None:
-    """The leftmost card in the troop deck, or None when it is not where a card should be."""
+def deck_slots(frame: np.ndarray) -> list[Match]:
+    """Every card in the troop deck, left to right, located by its outline. Empty slots
+    (dashed outlines) and screens without a deck give no slots."""
 
-    y0, y1 = DECK_Y
-    fill = (frame[y0:y1].max(axis=2) > CARD_BRIGHT).mean(axis=0)
-    columns = np.flatnonzero(fill > CARD_FILL)
-    if columns.size == 0:
-        return None
+    y0, y1 = EDGE_Y
+    grey = cv2.cvtColor(frame[y0:y1], cv2.COLOR_BGR2GRAY).astype(np.int16)
+    fill = (np.abs(grey[:, 2:] - grey[:, :-2]) > EDGE_STEP).mean(axis=0)
+    borders = [x + 1 for x in range(1, len(fill) - 1)
+               if fill[x] > EDGE_FILL and fill[x] >= fill[x - 1] and fill[x] >= fill[x + 1]]
 
-    # The first run of consecutive bright columns.
-    gaps = np.flatnonzero(np.diff(columns) > 1)
-    left, right = columns[0], columns[gaps[0]] if gaps.size else columns[-1]
-    width = int(right - left + 1)
-
-    if not (100 <= width <= 170):
-        return None
-
-    return Match("card", int(left), y0, width, y1 - y0, float(fill[left : right + 1].mean()))
+    # Pair each left border with the right border nearest a card's width, left to right;
+    # a border with no partner at card width is an edge inside the art, and is skipped.
+    lo, hi = SLOT_W
+    slots, i = [], 0
+    while i < len(borders):
+        left = borders[i]
+        rights = [r for r in borders[i + 1 :] if lo <= r - left <= hi]
+        if not rights:
+            i += 1
+            continue
+        right = min(rights, key=lambda r: abs(r - left - 132))
+        # The deck is a chain from the left edge: anything not continuing it is not a card.
+        start = slots[-1].x + slots[-1].w if slots else None
+        if (start is None and not DECK_LEFT[0] <= left <= DECK_LEFT[1]) or (start is not None and left - start > SLOT_GAP):
+            break
+        top, bottom = DECK_Y
+        score = float(min(fill[left - 1], fill[right - 1]))
+        slots.append(Match(f"slot{len(slots) + 1}", left, top, right - left, bottom - top, score))
+        i = next((k for k, b in enumerate(borders) if b > right), len(borders))
+    return slots

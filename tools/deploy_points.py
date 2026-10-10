@@ -14,7 +14,7 @@ import cv2
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from vision.deploy import UI_RECTS, deploy_points, first_card, outline_lines, outline_mask  # noqa: E402
+from vision.deploy import UI_RECTS, deck_slots, deploy_points, outline_lines, outline_mask  # noqa: E402
 from vision.overlay import draw_deploy  # noqa: E402
 
 
@@ -30,15 +30,14 @@ def main() -> None:
             raise SystemExit(f"could not read {path}")
 
         points = deploy_points(frame)
-        card = first_card(frame)
-        where = f"card at {card.centre} ({card.w} px)" if card else "no card"
-        print(f"{path}  {len(points):>2} deploy points  {where}")
+        slots = deck_slots(frame)
+        print(f"{path}  {len(points):>2} deploy points  {len(slots)} deck slots at x {[s.x for s in slots]}")
 
         if args.show:
             overlay = frame.copy()
             for x0, y0, x1, y1 in UI_RECTS:
                 cv2.rectangle(overlay, (x0, y0), (x1, y1), (128, 128, 128), 2)
-            draw_deploy(overlay, outline_lines(outline_mask(frame)), points, card)
+            draw_deploy(overlay, outline_lines(outline_mask(frame)), points, [(s, s.label) for s in slots])
             cv2.namedWindow("deploy points", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("deploy points", 960, 540)
             cv2.imshow("deploy points", overlay)

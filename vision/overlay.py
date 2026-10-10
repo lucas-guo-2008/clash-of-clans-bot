@@ -35,16 +35,16 @@ def draw_anchors(image: np.ndarray, peaks: dict[str, Match], threshold: float) -
             label(image, f"{m.label} {m.score:.3f}", (m.x, max(24, m.y - 10)), GREEN)
 
 
-def draw_deploy(image: np.ndarray, lines: np.ndarray, points: list[DeployPoint], card: Match | None) -> None:
-    """The outline the rays hit, the deploy points in tap order, and the card to select."""
+def draw_deploy(image: np.ndarray, lines: np.ndarray, points: list[DeployPoint], slots: list[tuple[Match, str]]) -> None:
+    """The outline the rays hit, the deploy points in tap order, and each deck slot with its label."""
 
     image[lines > 0] = MAGENTA
     for i, p in enumerate(points, 1):
         cv2.circle(image, (p.x, p.y), 12, CYAN, 3)
         cv2.putText(image, str(i), (p.x + 14, p.y - 8), FONT, 0.6, CYAN, 2, cv2.LINE_AA)
-    if card is not None:
-        cv2.rectangle(image, (card.x, card.y), (card.x + card.w, card.y + card.h), GREEN, 3)
-        label(image, f"card {card.w}px", (card.x, card.y - 10), GREEN)
+    for slot, text in slots:
+        cv2.rectangle(image, (slot.x, slot.y), (slot.x + slot.w, slot.y + slot.h), GREEN, 3)
+        label(image, text, (slot.x, slot.y - 10), GREEN)
 
 
 def draw_tap(image: np.ndarray, xy: tuple[int, int]) -> None:
