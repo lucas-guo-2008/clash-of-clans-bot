@@ -1,6 +1,8 @@
 """Reads the "Available Loot" panel on the attack-search screen.
 
 All constants are in 1920x1080 device pixels, measured from templates/initial_collection/adb_frame_4.png.
+The pipeline is shared with any three-row readout drawn in COC's digit font (see vision/result.py);
+only the row placement (panel) and font size are different
 """
 
 from dataclasses import dataclass
@@ -10,26 +12,41 @@ import numpy as np
 
 FRAME_SIZE = (1080, 1920)  # (h, w)
 
-# ROI covering all three loot rows, and the y-band of each row within the frame.
-LOOT_X = (95, 420)
-ROW_BANDS = ((148, 192), (205, 245), (262, 300))  # gold, elixir, dark elixir
 ROW_NAMES = ("gold", "elixir", "dark_elixir")
 
 # Numbers have tint so need tolerance
 WHITE_MIN = 150
 TINT_TOL = 70
 
-# Measured some glyph info (eg. "1" is very narrow)
-MIN_GLYPH_H, MAX_GLYPH_H = 18, 28
-MIN_GLYPH_W, MAX_GLYPH_W = 6, 26
-MIN_GLYPH_AREA = 30
-CANVAS_H, CANVAS_W = 26, 22
 
+@dataclass(frozen=True)
+class Font:
+    """One of COC's digit sizes. Templates only match glyphs cut at the same size."""
+
+    min_h: int
+    max_h: int
+    min_w: int  # "1" is very narrow
+    max_w: int
+    min_area: int
+    canvas: tuple[int, int]  # (h, w) every glyph is pasted into before matching
+    space_gap: int  # blank px that separates thousands
+
+
+@dataclass(frozen=True)
+class Panel:
+    """Where a gold/elixir/dark readout sits on the frame, and the font it is drawn in."""
+
+    x: tuple[int, int]
+    bands: tuple[tuple[int, int], tuple[int, int], tuple[int, int]]  # y-range of each row
+    font: Font
+
+
+LOOT_FONT = Font(min_h=18, max_h=28, min_w=6, max_w=26, min_area=30, canvas=(26, 22), space_gap=7)
+LOOT_X = (95, 420)
+ROW_BANDS = ((148, 192), (205, 245), (262, 300))  # gold, elixir, dark elixir
+LOOT_PANEL = Panel(LOOT_X, ROW_BANDS, LOOT_FONT)
 
 MAX_SHIFT = 2
-
-# Separator between thousands
-SPACE_GAP = 7
 
 MIN_SCORE = 0.93
 MIN_MARGIN = 0.05
@@ -84,7 +101,7 @@ def binarize(roi: np.ndarray) -> np.ndarray:
     return ((low > WHITE_MIN) & ((high - low) < TINT_TOL)).astype(np.uint8)
 
 
-def segment_glyphs(mask: np.ndarray) -> list[Glyph]:
+def segment_glyphs(mask: np.ndarray, font: Font = LOOT_FONT) -> list[Glyph]:
     """Split a binarized row into individual digits, left to right.
 
     Each glyph carries a black outline in COC's font, so connected components
@@ -96,11 +113,11 @@ def segment_glyphs(mask: np.ndarray) -> list[Glyph]:
     glyphs = []
     for label in range(1, count):
         x, y, w, h, area = stats[label]
-        if area < MIN_GLYPH_AREA:
+        if area < font.min_area:
             continue
-        if not (MIN_GLYPH_H <= h <= MAX_GLYPH_H):
+        if not (font.min_h <= h <= font.max_h):
             continue
-        if not (MIN_GLYPH_W <= w <= MAX_GLYPH_W):
+        if not (font.min_w <= w <= font.max_w):
             continue
         isolated = (labels[y : y + h, x : x + w] == label).astype(np.uint8)
         glyphs.append(Glyph(int(x), int(y), int(w), int(h), isolated))
@@ -109,13 +126,14 @@ def segment_glyphs(mask: np.ndarray) -> list[Glyph]:
     return glyphs
 
 
-def canonicalize(glyph: Glyph) -> np.ndarray:
+def canonicalize(glyph: Glyph, font: Font = LOOT_FONT) -> np.ndarray:
     """Paste a glyph into a fixed canvas: top-aligned, horizontally centred."""
 
-    canvas = np.zeros((CANVAS_H, CANVAS_W), np.uint8)
-    h = min(glyph.h, CANVAS_H)
-    w = min(glyph.w, CANVAS_W)
-    x0 = (CANVAS_W - w) // 2
+    canvas_h, canvas_w = font.canvas
+    canvas = np.zeros((canvas_h, canvas_w), np.uint8)
+    h = min(glyph.h, canvas_h)
+    w = min(glyph.w, canvas_w)
+    x0 = (canvas_w - w) // 2
     canvas[0:h, x0 : x0 + w] = glyph.mask[0:h, 0:w]
     return canvas
 
@@ -153,12 +171,12 @@ def classify(canvas: np.ndarray, templates: dict[str, np.ndarray]) -> tuple[str,
     return best_digit, best_score, best_score - runner_up
 
 
-def group_sizes(glyphs: list[Glyph]) -> list[int]:
+def group_sizes(glyphs: list[Glyph], font: Font = LOOT_FONT) -> list[int]:
     """Digit counts get split on the wide blank spaces (which separate thousands)."""
 
     sizes = [1]
     for previous, current in zip(glyphs, glyphs[1:]):
-        if current.x - previous.right >= SPACE_GAP:
+        if current.x - previous.right >= font.space_gap:
             sizes.append(1)
         else:
             sizes[-1] += 1
@@ -173,16 +191,16 @@ def grouping_is_valid(sizes: list[int]) -> bool:
     return all(size == 3 for size in sizes[1:])
 
 
-def parse_row(row_mask: np.ndarray, templates: dict[str, np.ndarray]) -> RowRead:
+def parse_row(row_mask: np.ndarray, templates: dict[str, np.ndarray], font: Font = LOOT_FONT) -> RowRead:
     """Read one binarized loot row."""
 
-    glyphs = segment_glyphs(row_mask)
+    glyphs = segment_glyphs(row_mask, font)
     if not glyphs:
         return RowRead(None, (), "no glyphs")
 
     digits, scores, margins = "", [], []
     for glyph in glyphs:
-        digit, score, margin = classify(canonicalize(glyph), templates)
+        digit, score, margin = classify(canonicalize(glyph, font), templates)
         digits += digit
         scores.append(score)
         margins.append(margin)
@@ -194,7 +212,7 @@ def parse_row(row_mask: np.ndarray, templates: dict[str, np.ndarray]) -> RowRead
     if min(margins) < MIN_MARGIN:
         return RowRead(None, scores, f"low margin {min(margins):.3f}")
 
-    sizes = group_sizes(glyphs)
+    sizes = group_sizes(glyphs, font)
     if not grouping_is_valid(sizes):
         return RowRead(None, scores, f"bad grouping {sizes}")
 
@@ -204,14 +222,20 @@ def parse_row(row_mask: np.ndarray, templates: dict[str, np.ndarray]) -> RowRead
 def read_loot(frame: np.ndarray, templates: dict[str, np.ndarray]) -> LootReading:
     """Read all three loot rows from a full attack-search frame."""
 
+    return read_panel(frame, templates, LOOT_PANEL)
+
+
+def read_panel(frame: np.ndarray, templates: dict[str, np.ndarray], panel: Panel) -> LootReading:
+    """Read a gold/elixir/dark readout. Templates must be cut at the panel's font size."""
+
     if frame.shape[:2] != FRAME_SIZE:
         raise ValueError(
             f"expected a {FRAME_SIZE[1]}x{FRAME_SIZE[0]} frame, got {frame.shape[1]}x{frame.shape[0]}; "
             "every constant in this module is in device pixels"
         )
 
-    x0, x1 = LOOT_X
-    rows = tuple(parse_row(binarize(frame[y0:y1, x0:x1]), templates) for y0, y1 in ROW_BANDS)
+    x0, x1 = panel.x
+    rows = tuple(parse_row(binarize(frame[y0:y1, x0:x1]), templates, panel.font) for y0, y1 in panel.bands)
 
     values = [row.value for row in rows]
     ok = all(row.ok for row in rows)
