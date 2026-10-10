@@ -6,10 +6,10 @@ from policy.thresholds import should_attack
 from vision.loot import LootReading
 from vision.screens import Screen
 
-# How many unrecognized frames in a row to wait out before exiting. Waiting is the only
-# recovery: clouds clear on their own, and a back press mid-search or mid-battle does harm.
-# Counted in loop steps, not seconds -- the longest cloud seen live lasted 4.
-PATIENCE = 8
+PATIENCE_SECONDS = 20.0
+
+GATE_TIMEOUT = 4.0  # s; after this the tap is assumed missed and may be repeated
+GATE_STABLE_FRAMES = 2  # a new screen must hold this many frames: a one-frame misread can't release it
 
 TAP = "tap"
 WAIT = "wait"
@@ -24,7 +24,7 @@ class Action:
     why: str = ""
 
 
-def decide(screen: Screen, reading: LootReading | None, unknown_streak: int) -> Action:
+def decide(screen: Screen, reading: LootReading | None, unknown_seconds: float) -> Action:
     """Making bad decisions. Given a screen, the loot showing on it, and how long we have
     been lost, return an action."""
 
@@ -38,23 +38,30 @@ def decide(screen: Screen, reading: LootReading | None, unknown_streak: int) -> 
         return Action(TAP, "find-match", "spend 900 to find a base")
 
     if screen is Screen.SCOUT:
-        # No reading, or one we could not trust, skips the base: a wasted 900 is far
-        # cheaper than an army spent on loot that was guessed at.
-        if reading is not None and should_attack(reading):
+        if reading is None:
+            return Action(WAIT, why="waiting for the loot panel to settle")
+        if should_attack(reading):
             return Action(DEPLOY, why="loot clears the thresholds")
         return Action(TAP, "next-button", "spend 900 on the next base")
 
     if screen is Screen.BATTLE:
-        # Never end a battle early: the game ends it when the last troop dies or time runs out.
         return Action(WAIT, why="battle in progress")
 
     if screen is Screen.RESULT:
-        # reading is the result once it has settled ("You got" counts up from 0), else None.
         if reading is None:
             return Action(WAIT, why="waiting for the loot count-up to settle")
         return Action(TAP, "return-home", "battle over, return home")
 
-    if unknown_streak < PATIENCE:
-        waited = f"{unknown_streak + 1}/{PATIENCE}"
+    if unknown_seconds < PATIENCE_SECONDS:
+        waited = f"{unknown_seconds:.0f}/{PATIENCE_SECONDS:.0f} s"
         return Action(WAIT, why=f"unrecognized, waiting for clouds to clear ({waited})")
-    return Action(ABORT, why=f"unrecognized for {unknown_streak} frames, giving up")
+    return Action(ABORT, why=f"unrecognized for {unknown_seconds:.0f} s, giving up")
+
+
+def gate_open(screen: Screen, tapped_on: Screen | None, seconds_since_tap: float, frames_on_screen: int) -> bool:
+    """May the bot act on this frame? Yes if nothing is pending, once the screen tapped on has
+    given way to another for GATE_STABLE_FRAMES frames, or once GATE_TIMEOUT has passed."""
+
+    if tapped_on is None or seconds_since_tap >= GATE_TIMEOUT:
+        return True
+    return screen is not tapped_on and frames_on_screen >= GATE_STABLE_FRAMES

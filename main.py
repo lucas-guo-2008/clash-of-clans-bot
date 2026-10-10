@@ -21,7 +21,7 @@ import cv2
 
 from capture.adb import connect, grab_frame
 from control.tap import tap_match, tap_point
-from policy.navigator import ABORT, DEPLOY, PATIENCE, TAP, Action, decide
+from policy.navigator import ABORT, DEPLOY, GATE_TIMEOUT, PATIENCE_SECONDS, TAP, WAIT, Action, decide, gate_open
 from vision.anchors import THRESHOLD, Match, peak_scores
 from vision.buttons import load_button_templates
 from vision.deploy import DeployPoint, deck_slots, deploy_points, outline_lines, outline_mask
@@ -32,7 +32,10 @@ from vision.result import load_result_templates, read_result
 from vision.screens import Screen, classify
 
 ROOT = Path(__file__).resolve().parent
-SETTLE_SECONDS = 1.5
+RESULT_SETTLE_SECONDS = 1.0  # "You got" must read the same for this long before it counts
+SCOUT_SETTLE_SECONDS = 0.6  # a readable loot panel must hold this long before the base is judged
+SCOUT_UNREADABLE_SECONDS = 2.0  # an unreadable panel is skipped only this long after the base appeared
+clock = time.monotonic  # every timing reads this, so tests can drive time
 UNKNOWN_DIR = ROOT / "templates" / "unknown"
 WINDOW = "bot"
 
@@ -99,7 +102,7 @@ def show(
     slots: list[Match],
     points: list[DeployPoint],
     tap: tuple[int, int] | None,
-    unknown_streak: int,
+    unknown_seconds: float,
     battles: int,
 ) -> None:
     """Draw everything the bot found and decided this step, and put it in the window."""
@@ -115,7 +118,7 @@ def show(
     target = f" {action.anchor}" if action.anchor else ""
     status = [(f"battles {battles}/{ITERATIONS}", WHITE)]
     if screen is Screen.UNKNOWN:
-        status.append((f"unknown {unknown_streak + 1}/{PATIENCE}", RED))
+        status.append((f"unknown {unknown_seconds:.0f}/{PATIENCE_SECONDS:.0f} s", RED))
     if reading is not None:
         status.append((describe_loot(reading), GREEN if reading.ok else RED))
     if screen is Screen.SCOUT:
@@ -131,13 +134,10 @@ def show(
     cv2.imshow(WINDOW, with_header(image, rows))
 
 
-def pause(seconds: float, window: bool) -> bool:
-    """Wait between steps. With a window, keep it responsive; False means q or Esc was pressed."""
+def window_alive() -> bool:
+    """Let the window repaint; False means q or Esc was pressed."""
 
-    if not window:
-        time.sleep(seconds)
-        return True
-    return cv2.waitKey(int(seconds * 1000)) & 0xFF not in (ord("q"), 27)
+    return cv2.waitKey(1) & 0xFF not in (ord("q"), 27)
 
 
 def main() -> int:
@@ -154,15 +154,19 @@ def main() -> int:
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(WINDOW, 960, 600)
 
-    unknown_streak = 0
+    unknown_since = None
     battles = 0
-    previous_result = None  # what "You got" read on the previous frame of this result screen
-    settled = None  # this result screen's reading, once two frames in a row agreed
+    pending, pending_since = None, 0.0
+    settled = None  # this result screen's reading, once it held for RESULT_SETTLE_SECONDS
+    scout_values, scout_since, scout_seen = None, 0.0, None  # this base's latest loot reading, since when, first seen
     heroes: list[Match] = []  # deployed hero cards whose ability has not been used yet
     ability_at = 0.0
     looted = (0, 0, 0)  # gold, elixir, dark elixir over every readable result
     searches = 0
-    started = time.monotonic()
+    started = clock()
+    tapped_on, tapped_at = None, 0.0  # the screen of the last gated tap, and when
+    last_screen, frames_on_screen = None, 0
+    last_logged = None
 
     for step in itertools.count(1):
         frame = grab_frame(device)
@@ -171,21 +175,44 @@ def main() -> int:
         screen = classify(matches)
         reading = read_loot(frame, digits) if screen is Screen.SCOUT else None
 
-        # "You got" counts up from 0 as the result screen appears, and a part-way number is a
-        # valid reading. Trust it only once two frames in a row agree, then count the battle once.
+        frames_on_screen = frames_on_screen + 1 if screen is last_screen else 1
+        last_screen = screen
+
+        now = clock()
+        new_unknown = screen is Screen.UNKNOWN and unknown_since is None
+        if screen is Screen.UNKNOWN:
+            unknown_since = now if unknown_since is None else unknown_since
+        else:
+            unknown_since = None
+        unknown_seconds = now - unknown_since if unknown_since is not None else 0.0
+
         result = None
         if screen is Screen.RESULT:
             if settled is None:
-                now = read_result(frame, result_digits)
-                values = (now.gold, now.elixir, now.dark_elixir)
-                if values == previous_result:
-                    settled = result = now
+                read = read_result(frame, result_digits)
+                values = (read.gold, read.elixir, read.dark_elixir)
+                if values != pending:
+                    pending, pending_since = values, now
+                elif now - pending_since >= RESULT_SETTLE_SECONDS:
+                    settled = result = read
                     battles += 1
-                    if now.ok:
-                        looted = (looted[0] + now.gold, looted[1] + now.elixir, looted[2] + now.dark_elixir)
-                previous_result = values
+                    if read.ok:
+                        looted = (looted[0] + read.gold, looted[1] + read.elixir, looted[2] + read.dark_elixir)
         else:
-            previous_result, settled = None, None
+            pending, settled = None, None
+
+        scout_settled = None
+        if screen is Screen.SCOUT:
+            values = (reading.gold, reading.elixir, reading.dark_elixir)
+            if values != scout_values:
+                scout_values, scout_since = values, now
+            scout_seen = now if scout_seen is None else scout_seen
+            if reading.ok and now - scout_since >= SCOUT_SETTLE_SECONDS:
+                scout_settled = reading
+            elif not reading.ok and now - scout_seen >= SCOUT_UNREADABLE_SECONDS:
+                scout_settled = reading
+        else:
+            scout_values, scout_seen = None, None
 
         line = f"step {step:>3}  {screen.value:<12} {describe(matches)}"
         if reading is not None:
@@ -193,19 +220,30 @@ def main() -> int:
 
         if screen is Screen.HOME and battles >= ITERATIONS:
             print(f"{line}\n\nhome after {battles} battle(s) -- done")
-            print(run_summary(looted, searches, (time.monotonic() - started) / 60))
+            print(run_summary(looted, searches, (clock() - started) / 60))
             return 0
 
-        action = decide(screen, settled if screen is Screen.RESULT else reading, unknown_streak)
+        action = decide(screen, settled if screen is Screen.RESULT else scout_settled, unknown_seconds)
+        if tapped_on is not None and gate_open(screen, tapped_on, now - tapped_at, frames_on_screen):
+            tapped_on = None
+        if tapped_on is not None and action.kind in (TAP, DEPLOY):
+            waited = f"{now - tapped_at:.1f}/{GATE_TIMEOUT:.0f} s"
+            action = Action(WAIT, why=f"holding until the screen changes after the last tap ({waited})")
+
+        # Frames come ~5 per second: log when what the bot sees or means to do changes.
         target = f" {action.anchor}" if action.anchor else ""
-        print(f"{line}  -> {action.kind}{target}  ({action.why})")
+        logged = (screen, action.kind, action.anchor)
+        if logged != last_logged:
+            print(f"{line}  -> {action.kind}{target}  ({action.why})")
+            last_logged = logged
 
         if result is not None:
             got = f"{result.gold}/{result.elixir}/{result.dark_elixir}" if result.ok else "UNREADABLE (not counted)"
             print(f"        battle {battles} got {got}")
-            print(f"        {run_summary(looted, searches, (time.monotonic() - started) / 60)}")
+            print(f"        {run_summary(looted, searches, (clock() - started) / 60)}")
 
-        if screen is Screen.UNKNOWN:
+        # One frame per unrecognized stretch, plus the one it gives up on (usually a popup).
+        if new_unknown or action.kind == ABORT:
             print(f"        saved {save_unknown(frame).relative_to(ROOT)}")
 
         slots, points = [], []
@@ -221,7 +259,7 @@ def main() -> int:
             tap = slots[0].centre
 
         if args.show:
-            show(frame, step, screen, action, peaks, reading, slots, points, tap, unknown_streak, battles)
+            show(frame, step, screen, action, peaks, reading, slots, points, tap, unknown_seconds, battles)
 
         if args.dry_run:
             if tap is not None:
@@ -236,30 +274,30 @@ def main() -> int:
 
         if action.kind == TAP:
             tap_match(device, matches[action.anchor])
+            tapped_on, tapped_at = screen, clock()
             if action.anchor in ("find-match", "next-button"):
                 searches += 1
         elif action.kind == DEPLOY:
             if not points:
                 print("        no deploy points on this frame, retrying")
             elif len(slots) != len(DECK):
-                # Retrying would not change the deck: DECK no longer describes the army.
                 print(f"\ndeck shows {len(slots)} cards but DECK lists {len(DECK)} -- update DECK in main.py",
                       file=sys.stderr)
                 return 1
             else:
                 heroes = deploy_army(device, slots, points)
-                ability_at = time.monotonic() + HERO_ABILITY_DELAY
+                ability_at = clock() + HERO_ABILITY_DELAY
+                tapped_on, tapped_at = screen, clock()
 
-        if screen is Screen.BATTLE and heroes and time.monotonic() >= ability_at:
+        if screen is Screen.BATTLE and heroes and clock() >= ability_at:
             for hero in heroes:
                 tap_match(device, hero)
             print(f"        hero abilities: tapped {len(heroes)} hero card(s)")
             heroes = []
         if screen is Screen.RESULT:
-            heroes = []  # battle over; an unused ability never carries into the next one
+            heroes = []
 
-        unknown_streak = unknown_streak + 1 if screen is Screen.UNKNOWN else 0
-        if not pause(SETTLE_SECONDS, args.show):
+        if args.show and not window_alive():
             print("\nstopped from the window")
             return 0
 

@@ -2,7 +2,7 @@
 
 import pytest
 
-from policy.navigator import ABORT, DEPLOY, PATIENCE, TAP, WAIT, decide
+from policy.navigator import ABORT, DEPLOY, GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS, TAP, WAIT, decide, gate_open
 from policy.thresholds import MIN_DARK, MIN_ELIXIR, MIN_GOLD, should_attack
 from vision.loot import LootReading
 from vision.screens import Screen
@@ -32,12 +32,15 @@ def test_result_waits_until_settled_then_returns_home():
     assert (action.kind, action.anchor) == (TAP, "return-home")
 
 
+def test_scout_waits_until_the_loot_panel_settles():
+    assert decide(Screen.SCOUT, None, 0).kind == WAIT
+
+
 def test_rich_base_is_attacked():
     assert decide(Screen.SCOUT, RICH, 0).kind == DEPLOY
 
 
 @pytest.mark.parametrize("reading", [
-    None,
     loot(MIN_GOLD - 1, MIN_ELIXIR, MIN_DARK),
     loot(MIN_GOLD, MIN_ELIXIR - 1, MIN_DARK),
     loot(MIN_GOLD, MIN_ELIXIR, MIN_DARK - 1),
@@ -53,5 +56,16 @@ def test_thresholds_are_inclusive():
 
 
 def test_unknown_waits_out_its_patience_then_aborts():
-    kinds = [decide(Screen.UNKNOWN, None, streak).kind for streak in range(PATIENCE + 1)]
-    assert kinds == [WAIT] * PATIENCE + [ABORT]
+    kinds = [decide(Screen.UNKNOWN, None, s).kind for s in (0.0, PATIENCE_SECONDS - 0.1, PATIENCE_SECONDS)]
+    assert kinds == [WAIT, WAIT, ABORT]
+
+
+@pytest.mark.parametrize("screen, tapped_on, since, frames, want", [
+    (Screen.HOME, None, 0.0, 1, True),  # nothing pending
+    (Screen.HOME, Screen.HOME, 1.0, 5, False),  # same screen: the tap hasn't taken effect yet
+    (Screen.ARMY, Screen.HOME, 0.2, GATE_STABLE_FRAMES - 1, False),  # new screen, not held long enough
+    (Screen.ARMY, Screen.HOME, 0.4, GATE_STABLE_FRAMES, True),  # new screen, held
+    (Screen.HOME, Screen.HOME, GATE_TIMEOUT, 99, True),  # timed out: the tap was missed
+])
+def test_gate(screen, tapped_on, since, frames, want):
+    assert gate_open(screen, tapped_on, since, frames) is want
