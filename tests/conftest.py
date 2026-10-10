@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from vision.buttons import load_button_templates  # noqa: E402
 from vision.glyphs import load_digit_templates  # noqa: E402
+from vision.result import load_result_templates  # noqa: E402
 
 FRAMES = ROOT / "templates" / "initial_collection"
 UNKNOWN = ROOT / "templates" / "unknown"
@@ -43,3 +44,8 @@ def buttons():
 @pytest.fixture(scope="session")
 def digits():
     return load_digit_templates()
+
+
+@pytest.fixture(scope="session")
+def result_digits():
+    return load_result_templates()
