@@ -6,7 +6,8 @@ drop the first card's troops around it -> wait out the battle -> Return Home, IT
   python main.py
   python main.py --show      # live window: screen, scores, deploy points, next tap
 
-Stops back home after ITERATIONS battles, or on Ctrl-C (or q in the --show window).
+Stops back home after ITERATIONS battles, or on Ctrl-C (or q in the --show window). After each
+battle it prints what "You got" showed, and a running summary of the run.
 """
 
 import argparse
@@ -27,6 +28,7 @@ from vision.deploy import DeployPoint, deploy_points, first_card, outline_lines,
 from vision.glyphs import load_digit_templates
 from vision.loot import LootReading, read_loot
 from vision.overlay import CYAN, GREEN, GREY, RED, WHITE, draw_anchors, draw_deploy, draw_tap, with_header
+from vision.result import load_result_templates, read_result
 from vision.screens import Screen, classify
 
 ROOT = Path(__file__).resolve().parent
@@ -36,6 +38,7 @@ WINDOW = "bot"
 
 ITERATIONS = 1
 TROOPS = 24  # in the first card; slot and count detection come later
+SEARCH_COST = 900
 
 
 def describe(matches) -> str:
@@ -49,6 +52,10 @@ def describe_loot(reading: LootReading) -> str:
         reasons = ",".join(row.reason for row in reading.rows if row.reason) or "?"
         return f"loot=UNREADABLE({reasons})"
     return f"loot={reading.gold}/{reading.elixir}/{reading.dark_elixir}"
+
+
+def run_summary(looted: tuple[int, int, int], searches: int, minutes: float) -> str:
+    return f"run: looted {looted[0]} gold, {looted[1]} elixir, {looted[2]} dark elixir across {searches} search{'es' if searches != 1 else ''} in {minutes:.1f} min"
 
 
 def save_unknown(frame) -> Path:
@@ -116,6 +123,7 @@ def main() -> int:
 
     buttons = load_button_templates()
     digits = load_digit_templates()
+    result_digits = load_result_templates()
     device = connect()
     if args.show:
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
@@ -124,6 +132,9 @@ def main() -> int:
     unknown_streak = 0
     battles = 0
     previous = None
+    looted = (0, 0, 0)  # gold, elixir, dark elixir over every readable result
+    searches = 0
+    started = time.monotonic()
 
     for step in itertools.count(1):
         frame = grab_frame(device)
@@ -132,8 +143,12 @@ def main() -> int:
         screen = classify(matches)
         reading = read_loot(frame, digits) if screen is Screen.SCOUT else None
 
+        result = None
         if screen is Screen.RESULT and previous is not Screen.RESULT:
             battles += 1
+            result = read_result(frame, result_digits)
+            if result.ok:
+                looted = (looted[0] + result.gold, looted[1] + result.elixir, looted[2] + result.dark_elixir)
         previous = screen
 
         line = f"step {step:>3}  {screen.value:<12} {describe(matches)}"
@@ -142,11 +157,17 @@ def main() -> int:
 
         if screen is Screen.HOME and battles >= ITERATIONS:
             print(f"{line}\n\nhome after {battles} battle(s) -- done")
+            print(run_summary(looted, searches, (time.monotonic() - started) / 60))
             return 0
 
         action = decide(screen, reading, unknown_streak)
         target = f" {action.anchor}" if action.anchor else ""
         print(f"{line}  -> {action.kind}{target}  ({action.why})")
+
+        if result is not None:
+            got = f"{result.gold}/{result.elixir}/{result.dark_elixir}" if result.ok else "UNREADABLE (not counted)"
+            print(f"        battle {battles} got {got}")
+            print(f"        {run_summary(looted, searches, (time.monotonic() - started) / 60)}")
 
         if screen is Screen.UNKNOWN:
             print(f"        saved {save_unknown(frame).relative_to(ROOT)}")
@@ -180,6 +201,8 @@ def main() -> int:
 
         if action.kind == TAP:
             tap_match(device, matches[action.anchor])
+            if action.anchor in ("find-match", "next-button"):
+                searches += 1
         elif action.kind == DEPLOY:
             if card is None or not points:
                 print("        nothing to tap on this frame, retrying")
