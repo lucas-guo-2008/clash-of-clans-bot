@@ -1,5 +1,6 @@
 """Every saved frame is named as the right screen, with room to spare around THRESHOLD."""
 
+import cv2
 import pytest
 
 from vision.anchors import THRESHOLD, peak_scores
@@ -43,6 +44,12 @@ def test_saved_frame_is_named(frame, buttons, n, want):
 @pytest.mark.parametrize("name, want", UNRECOGNIZED)
 def test_unrecognized_frame_stays_unrecognized(unknown_frame, buttons, name, want):
     assert named(unknown_frame(name), buttons) == want
+
+
+def test_portrait_frame_is_unknown_not_a_crash(frame, buttons):
+    # The emulator sends 1080x1920 when the game is closed (Android's home screen is portrait).
+    # The button search regions do not fit; that must read as unknown, so the bot waits, then stops.
+    assert named(cv2.rotate(frame(1), cv2.ROTATE_90_CLOCKWISE), buttons) == "unknown"
 
 
 @pytest.mark.parametrize("n", SCREENS)
