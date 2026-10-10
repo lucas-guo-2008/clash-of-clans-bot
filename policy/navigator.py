@@ -49,6 +49,9 @@ def decide(screen: Screen, reading: LootReading | None, unknown_streak: int) -> 
         return Action(WAIT, why="battle in progress")
 
     if screen is Screen.RESULT:
+        # reading is the result once it has settled ("You got" counts up from 0), else None.
+        if reading is None:
+            return Action(WAIT, why="waiting for the loot count-up to settle")
         return Action(TAP, "return-home", "battle over, return home")
 
     if unknown_streak < PATIENCE:

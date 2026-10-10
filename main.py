@@ -156,7 +156,8 @@ def main() -> int:
 
     unknown_streak = 0
     battles = 0
-    previous = None
+    previous_result = None  # what "You got" read on the previous frame of this result screen
+    settled = None  # this result screen's reading, once two frames in a row agreed
     heroes: list[Match] = []  # deployed hero cards whose ability has not been used yet
     ability_at = 0.0
     looted = (0, 0, 0)  # gold, elixir, dark elixir over every readable result
@@ -170,13 +171,21 @@ def main() -> int:
         screen = classify(matches)
         reading = read_loot(frame, digits) if screen is Screen.SCOUT else None
 
+        # "You got" counts up from 0 as the result screen appears, and a part-way number is a
+        # valid reading. Trust it only once two frames in a row agree, then count the battle once.
         result = None
-        if screen is Screen.RESULT and previous is not Screen.RESULT:
-            battles += 1
-            result = read_result(frame, result_digits)
-            if result.ok:
-                looted = (looted[0] + result.gold, looted[1] + result.elixir, looted[2] + result.dark_elixir)
-        previous = screen
+        if screen is Screen.RESULT:
+            if settled is None:
+                now = read_result(frame, result_digits)
+                values = (now.gold, now.elixir, now.dark_elixir)
+                if values == previous_result:
+                    settled = result = now
+                    battles += 1
+                    if now.ok:
+                        looted = (looted[0] + now.gold, looted[1] + now.elixir, looted[2] + now.dark_elixir)
+                previous_result = values
+        else:
+            previous_result, settled = None, None
 
         line = f"step {step:>3}  {screen.value:<12} {describe(matches)}"
         if reading is not None:
@@ -187,7 +196,7 @@ def main() -> int:
             print(run_summary(looted, searches, (time.monotonic() - started) / 60))
             return 0
 
-        action = decide(screen, reading, unknown_streak)
+        action = decide(screen, settled if screen is Screen.RESULT else reading, unknown_streak)
         target = f" {action.anchor}" if action.anchor else ""
         print(f"{line}  -> {action.kind}{target}  ({action.why})")
 

@@ -67,12 +67,12 @@ def test_one_full_attack(run, frame):
 
     assert code == 0
     assert as_planned(taps[3 : 3 + len(deploy)], frame(5)) == deploy  # after the 3 navigation taps
-    assert taps[3 + len(deploy) :] == [RETURN_HOME, RETURN_HOME]  # skip/spell cards never tapped
+    assert taps[3 + len(deploy) :] == [RETURN_HOME]  # skip/spell never tapped; first result frame waits
 
 
 def test_hero_abilities_fire_once_in_battle(run, frame, monkeypatch):
     monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 0.0)
-    code, taps = run([5, 7, 7, 8, "cloud", 1])
+    code, taps = run([5, 7, 7, 8, 8, "cloud", 1])
     deploy = expected_deploy(frame(5))
     heroes = [s.centre for s, (kind, _) in zip(deck_slots(frame(5)), main.DECK) if kind == "hero"]
 
@@ -89,14 +89,26 @@ def test_deck_that_does_not_match_DECK_aborts_without_tapping(run, monkeypatch):
 
 def test_long_battle_does_not_use_up_patience(run):
     # The unknown frame must come before the result screen: tapping Return Home would reset the count.
-    code, _ = run([5, *[7] * (PATIENCE + 2), "cloud", 8, "cloud", 1])
+    code, _ = run([5, *[7] * (PATIENCE + 2), "cloud", 8, 8, "cloud", 1])
     assert code == 0
 
 
 def test_no_outline_means_no_taps(run, frame):
-    code, taps = run([4, 5, 7, 8, "cloud", 1])
+    code, taps = run([4, 5, 7, 8, 8, "cloud", 1])
     assert code == 0
     assert taps[0] == deck_slots(frame(5))[0].centre != deck_slots(frame(4))[0].centre
+
+
+def test_result_is_counted_only_once_it_settles(run, capsys):
+    # Stand-in for the count-up: frame 18 then 19 read differently, so the bot waits; 19 twice
+    # agrees, so the battle is counted with 19's numbers and Return Home is tapped once.
+    code, taps = run([5, 7, 18, 19, 19, 19, "cloud", 1])
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert taps.count(RETURN_HOME) == 2  # both frames after it settled
+    assert "battle 1 got 463831/398186/8549" in out
+    assert "358306" not in out.split("battle 1 got")[1]  # the unsettled reading was never counted
 
 
 def test_endless_unknown_aborts_without_tapping(run):

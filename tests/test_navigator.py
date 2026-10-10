@@ -20,11 +20,16 @@ RICH = loot(MIN_GOLD, MIN_ELIXIR, MIN_DARK)
     (Screen.ARMY, TAP, "attack-button"),
     (Screen.ATTACK_MENU, TAP, "find-match"),
     (Screen.BATTLE, WAIT, None),
-    (Screen.RESULT, TAP, "return-home"),
 ])
 def test_each_screen_has_its_action(screen, kind, anchor):
     action = decide(screen, None, 0)
     assert (action.kind, action.anchor) == (kind, anchor)
+
+
+def test_result_waits_until_settled_then_returns_home():
+    assert decide(Screen.RESULT, None, 0).kind == WAIT
+    action = decide(Screen.RESULT, RICH, 0)
+    assert (action.kind, action.anchor) == (TAP, "return-home")
 
 
 def test_rich_base_is_attacked():
