@@ -1,5 +1,6 @@
 """main.py end to end, over saved frames, with a fake device that records taps instead of sending them."""
 
+import csv
 import math
 import sys
 
@@ -36,7 +37,7 @@ class OutOfFrames(Exception):
 
 
 @pytest.fixture
-def run(frame, unknown_frame, monkeypatch):
+def run(frame, unknown_frame, monkeypatch, tmp_path):
     def play(sequence):
         cache = {}
 
@@ -63,6 +64,7 @@ def run(frame, unknown_frame, monkeypatch):
         monkeypatch.setattr(main, "grab_frame", grab)
         monkeypatch.setattr(main, "clock", lambda: count[0] * STEP)
         monkeypatch.setattr(main, "save_unknown", lambda _: main.ROOT / "not-saved-in-tests.png")
+        monkeypatch.setattr(main, "SCOUT_DIR", tmp_path / "scout")
         monkeypatch.setattr(sys, "argv", ["main.py"])
         try:
             return main.main(), device.taps
@@ -151,6 +153,18 @@ def test_cloud_fade_over_the_loot_panel_is_waited_out(run, frame):
 def test_panel_that_stays_unreadable_is_skipped(run, frame):
     code, taps = run([(faded(frame(5)), math.ceil(main.SCOUT_UNREADABLE_SECONDS / STEP) + 2)])
     assert taps == [NEXT]
+
+
+def test_each_judged_base_is_saved_once(run, frame, tmp_path):
+    skipped = math.ceil(main.SCOUT_UNREADABLE_SECONDS / STEP) + 2
+    run([(faded(frame(5)), skipped + HOLD), ("cloud", HOLD), (5, SCOUT + HOLD)])
+    scout = tmp_path / "scout"
+    rows = list(csv.DictReader((scout / "index.csv").open()))
+    loot = main.read_loot(frame(5), main.load_digit_templates())
+
+    assert [r["decision"] for r in rows] == ["next", "attack"]  # not again while the gate holds each base
+    assert rows[0]["gold"] == "" and rows[1]["gold"] == str(loot.gold)
+    assert sorted(p.name for p in scout.glob("*.png")) == sorted(r["file"] for r in rows)
 
 
 def test_endless_unknown_aborts_without_tapping(run):

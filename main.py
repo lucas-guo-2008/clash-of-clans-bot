@@ -6,11 +6,12 @@ drop the first card's troops around it -> wait out the battle -> Return Home, IT
   python main.py
   python main.py --show      # live window: screen, scores, deploy points, next tap
 
-Stops back home after ITERATIONS battles, or on Ctrl-C (or q in the --show window). After each
+Stops back home after ITERATIONS battles. After each
 battle it prints what "You got" showed, and a running summary of the run.
 """
 
 import argparse
+import csv
 import itertools
 import sys
 import time
@@ -37,6 +38,7 @@ SCOUT_SETTLE_SECONDS = 0.6  # a readable loot panel must hold this long before t
 SCOUT_UNREADABLE_SECONDS = 2.0  # an unreadable panel is skipped only this long after the base appeared
 clock = time.monotonic  # every timing reads this, so tests can drive time
 UNKNOWN_DIR = ROOT / "templates" / "unknown"
+SCOUT_DIR = ROOT / "templates" / "scout"
 WINDOW = "bot"
 
 ITERATIONS = 1
@@ -45,7 +47,6 @@ ITERATIONS = 1
 #   troop: tap the card, then `count` drops cycling the deploy points
 #   hero:  tap the card, one drop; the ability fires HERO_ABILITY_DELAY s later (card tapped again)
 #   spell: located but not cast -- aiming waits for building detection (Phase 4/5)
-#   skip:  not deployed (the Balloon card)
 DECK = (("troop", 24), ("skip", 0), ("hero", 1), ("hero", 1), ("spell", 11))
 HERO_ABILITY_DELAY = 10.0
 SEARCH_COST = 900
@@ -89,6 +90,23 @@ def save_unknown(frame) -> Path:
     UNKNOWN_DIR.mkdir(parents=True, exist_ok=True)
     out = UNKNOWN_DIR / f"unknown_{datetime.now():%Y%m%d_%H%M%S_%f}.png"
     cv2.imwrite(str(out), frame)
+    return out
+
+
+def save_scout(frame, reading: LootReading, decision: str) -> Path:
+    """Keep the frame a base was judged on, with its loot and the decision, in index.csv."""
+
+    SCOUT_DIR.mkdir(parents=True, exist_ok=True)
+    out = SCOUT_DIR / f"scout_{datetime.now():%Y%m%d_%H%M%S_%f}.png"
+    cv2.imwrite(str(out), frame, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+    index = SCOUT_DIR / "index.csv"
+    new = not index.exists()
+    loot = (reading.gold, reading.elixir, reading.dark_elixir) if reading.ok else ("", "", "")
+    with index.open("a", newline="") as f:
+        rows = csv.writer(f)
+        if new:
+            rows.writerow(["file", "gold", "elixir", "dark_elixir", "decision"])
+        rows.writerow([out.name, *loot, decision])
     return out
 
 
@@ -159,6 +177,7 @@ def main() -> int:
     pending, pending_since = None, 0.0
     settled = None  # this result screen's reading, once it held for RESULT_SETTLE_SECONDS
     scout_values, scout_since, scout_seen = None, 0.0, None  # this base's latest loot reading, since when, first seen
+    scout_saved = False  # this base's frame is in SCOUT_DIR
     heroes: list[Match] = []  # deployed hero cards whose ability has not been used yet
     ability_at = 0.0
     looted = (0, 0, 0)  # gold, elixir, dark elixir over every readable result
@@ -212,7 +231,7 @@ def main() -> int:
             elif not reading.ok and now - scout_seen >= SCOUT_UNREADABLE_SECONDS:
                 scout_settled = reading
         else:
-            scout_values, scout_seen = None, None
+            scout_values, scout_seen, scout_saved = None, None, False
 
         line = f"step {step:>3}  {screen.value:<12} {describe(matches)}"
         if reading is not None:
@@ -224,6 +243,10 @@ def main() -> int:
             return 0
 
         action = decide(screen, settled if screen is Screen.RESULT else scout_settled, unknown_seconds)
+        if scout_settled is not None and not scout_saved:
+            save_scout(frame, scout_settled, "attack" if action.kind == DEPLOY else "next")
+            scout_saved = True
+
         if tapped_on is not None and gate_open(screen, tapped_on, now - tapped_at, frames_on_screen):
             tapped_on = None
         if tapped_on is not None and action.kind in (TAP, DEPLOY):
@@ -265,7 +288,7 @@ def main() -> int:
             if tap is not None:
                 print(f"        would tap {action.anchor or 'card'} at {tap}")
             if args.show:
-                cv2.waitKey(0)  # hold the one frame until a key is pressed
+                cv2.waitKey(0)
             return 0
 
         if action.kind == ABORT:
