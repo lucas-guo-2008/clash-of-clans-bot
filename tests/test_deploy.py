@@ -39,7 +39,7 @@ def test_every_deck_card_is_found(frame, n, lefts):
     assert [s.x for s in deck_slots(frame(n))] == lefts
 
 
-@pytest.mark.parametrize("n", [0, 1, 2, 3, 8, *range(18, 24)])  # no deck; 1 and 23 have card-width edges elsewhere
+@pytest.mark.parametrize("n", [0, 1, 2, 3, 8, *range(18, 24), 25])  # no deck; 1, 23, 25 have card-width edges elsewhere
 def test_no_deck_gives_no_slots(frame, n):
     assert deck_slots(frame(n)) == []
 

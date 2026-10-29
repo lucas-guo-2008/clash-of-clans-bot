@@ -7,12 +7,13 @@ from vision.anchors import THRESHOLD, peak_scores
 from vision.screens import classify
 
 SCREENS = {
-    0: "result", 1: "home", 2: "attack_menu", 3: "army",
+    0: "result", 2: "attack_menu", 3: "army",
     4: "scout", 5: "scout", 6: "scout", 7: "battle", 8: "result",
     9: "battle",  # the scout timer ran out with no troop down: End Battle, no Next
     **{n: "scout" for n in range(10, 18)},
     **{n: "result" for n in range(18, 23)},
-    23: "home",  # the Attack! map icon in a different pose from frame 1; the old whole-button template scored 0.763
+    1: "unknown", 23: "unknown",  # pre-revamp home (Attack!); its template is in templates/buttons/legacy/
+    25: "home",  # revamped home: "Battle" lettering, same spot; the screens after it are unchanged
 }
 
 UNRECOGNIZED = [

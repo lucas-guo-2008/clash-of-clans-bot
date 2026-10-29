@@ -5,7 +5,7 @@ over ADB, recognises the interface, reads each opponent's loot, attacks the base
 the whole army, and records what it won — no game API and no injected code, just pixels in and
 touches out. It runs against the real client in an Android emulator on macOS.
 
-A run: home → army → attack menu → search → read the loot, **Next** until a base clears the
+A run: home → attack menu → army → search → read the loot, **Next** until a base clears the
 thresholds → find the deploy zone and drop the army around it → wait out the battle → read
 "You got" off the result screen → Return Home. It stops back home after `ITERATIONS` battles.
 

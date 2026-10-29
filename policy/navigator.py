@@ -29,10 +29,10 @@ def decide(screen: Screen, reading: LootReading | None, unknown_seconds: float) 
     been lost, return an action."""
 
     if screen is Screen.HOME:
-        return Action(TAP, "attack", "open the army screen")
+        return Action(TAP, "battle", "open the attack menu")
 
     if screen is Screen.ARMY:
-        return Action(TAP, "attack-button", "open the attack menu")
+        return Action(TAP, "attack-button", "start the search")
 
     if screen is Screen.ATTACK_MENU:
         return Action(TAP, "find-match", "spend 900 to find a base")

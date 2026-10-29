@@ -1,5 +1,5 @@
 """
-Farm: home -> army -> attack menu -> scout -> Next until a base clears the thresholds ->
+Farm: home -> attack menu -> army -> scout -> Next until a base clears the thresholds ->
 drop the first card's troops around it -> wait out the battle -> Return Home, ITERATIONS times.
 
   python main.py --dry-run

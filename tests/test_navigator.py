@@ -16,7 +16,7 @@ RICH = loot(MIN_GOLD, MIN_ELIXIR, MIN_DARK)
 
 
 @pytest.mark.parametrize("screen, kind, anchor", [
-    (Screen.HOME, TAP, "attack"),
+    (Screen.HOME, TAP, "battle"),
     (Screen.ARMY, TAP, "attack-button"),
     (Screen.ATTACK_MENU, TAP, "find-match"),
     (Screen.BATTLE, WAIT, None),

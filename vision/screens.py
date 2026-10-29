@@ -23,7 +23,7 @@ RULES: tuple[tuple[Screen, str], ...] = (
     (Screen.BATTLE, "surrender"),
     (Screen.ATTACK_MENU, "find-match"),
     (Screen.ARMY, "attack-button"),
-    (Screen.HOME, "attack"),
+    (Screen.HOME, "battle"),
 )
 
 

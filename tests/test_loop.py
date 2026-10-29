@@ -11,8 +11,8 @@ from policy.navigator import GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS
 from vision.deploy import deck_slots, deploy_points
 
 CLOUD = "unknown_20260919_005725_732450.png"
-ATTACK = (125, 1021)
-ATTACK_BUTTON = (1696, 963)
+BATTLE = (126, 1026)  # home, revamped UI (frame 25)
+FIND_MATCH = (329, 802)
 RETURN_HOME = (961, 925)  # centre of the return-home match
 
 STEP = 0.2
@@ -86,8 +86,8 @@ def as_planned(taps, frame):
 
 
 def test_one_full_attack(run, frame):
-    code, taps = run([(1, HOLD), (3, HOLD), (2, HOLD), ("cloud", HOLD), (5, SCOUT), (7, HOLD),
-                      (8, SETTLE + 2), ("cloud", HOLD), 1])
+    code, taps = run([(25, HOLD), (2, HOLD), (3, HOLD), ("cloud", HOLD), (5, SCOUT), (7, HOLD),
+                      (8, SETTLE + 2), ("cloud", HOLD), 25])
     deploy = expected_deploy(frame(5))
 
     assert code == 0
@@ -97,7 +97,7 @@ def test_one_full_attack(run, frame):
 
 def test_hero_abilities_fire_once_in_battle(run, frame, monkeypatch):
     monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 0.0)
-    code, taps = run([(5, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 1])
+    code, taps = run([(5, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 25])
     deploy = expected_deploy(frame(5))
     heroes = [s.centre for s, (kind, _) in zip(deck_slots(frame(5)), main.DECK) if kind == "hero"]
 
@@ -113,18 +113,18 @@ def test_deck_that_does_not_match_DECK_aborts_without_tapping(run, monkeypatch):
 
 
 def test_long_battle_does_not_use_up_patience(run):
-    code, _ = run([(5, SCOUT), (7, PATIENCE_FRAMES + 2), "cloud", (8, SETTLE + 2), ("cloud", HOLD), 1])
+    code, _ = run([(5, SCOUT), (7, PATIENCE_FRAMES + 2), "cloud", (8, SETTLE + 2), ("cloud", HOLD), 25])
     assert code == 0
 
 
 def test_no_outline_means_no_taps(run, frame):
-    code, taps = run([(4, SCOUT), (5, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 1])
+    code, taps = run([(4, SCOUT), (5, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 25])
     assert code == 0
     assert taps[0] == deck_slots(frame(5))[0].centre != deck_slots(frame(4))[0].centre
 
 
 def test_result_is_counted_only_once_it_settles(run, capsys):
-    code, taps = run([(5, SCOUT), (7, HOLD), (18, HOLD), (19, SETTLE + 2), ("cloud", HOLD), 1])
+    code, taps = run([(5, SCOUT), (7, HOLD), (18, HOLD), (19, SETTLE + 2), ("cloud", HOLD), 25])
     out = capsys.readouterr().out
 
     assert code == 0
@@ -162,20 +162,20 @@ def test_endless_unknown_aborts_without_tapping(run):
 # The tap gate: after a tap, act again only once another screen has held GATE_STABLE_FRAMES, or GATE_TIMEOUT has passed (the tap was missed).
 
 def test_no_second_tap_while_the_screen_has_not_changed(run):
-    _, taps = run([(1, int(GATE_TIMEOUT / STEP) - 2)])
-    assert taps == [ATTACK]
+    _, taps = run([(25, int(GATE_TIMEOUT / STEP) - 2)])
+    assert taps == [BATTLE]
 
 
 def test_missed_tap_is_retried_after_the_timeout(run):
-    _, taps = run([(1, math.ceil(GATE_TIMEOUT / STEP) + 2)])
-    assert taps == [ATTACK, ATTACK]
+    _, taps = run([(25, math.ceil(GATE_TIMEOUT / STEP) + 2)])
+    assert taps == [BATTLE, BATTLE]
 
 
 def test_one_frame_flicker_does_not_release_the_gate(run):
-    _, taps = run([(1, 2), "cloud", (1, 3)])
-    assert taps == [ATTACK]
+    _, taps = run([(25, 2), "cloud", (25, 3)])
+    assert taps == [BATTLE]
 
 
 def test_a_new_screen_held_for_two_frames_releases_the_gate(run):
-    _, taps = run([1, (3, GATE_STABLE_FRAMES)])
-    assert taps == [ATTACK, ATTACK_BUTTON]
+    _, taps = run([25, (2, GATE_STABLE_FRAMES)])
+    assert taps == [BATTLE, FIND_MATCH]
