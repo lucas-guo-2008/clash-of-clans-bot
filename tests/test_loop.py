@@ -9,7 +9,7 @@ import pytest
 
 import main
 from policy.navigator import GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS
-from vision.deploy import deck_slots, deploy_points
+from vision.deploy import UI_RECTS, deck_slots, deploy_points
 
 CLOUD = "unknown_20260919_005725_732450.png"
 BATTLE = (126, 1026)  # home, revamped UI (frame 25)
@@ -21,6 +21,7 @@ HOLD = GATE_STABLE_FRAMES + 1
 SETTLE = math.ceil(main.RESULT_SETTLE_SECONDS / STEP) + 1
 SCOUT = math.ceil(main.SCOUT_SETTLE_SECONDS / STEP) + 2  # scout frames until a readable base is judged
 NEXT = (1749, 771)  # centre of the Next button
+SCOUT_AT = 24  # a readable base with an outline, in the revamped UI
 PATIENCE_FRAMES = math.ceil(PATIENCE_SECONDS / STEP) + 1  # unknown frames until the bot gives up
 
 
@@ -88,20 +89,20 @@ def as_planned(taps, frame):
 
 
 def test_one_full_attack(run, frame):
-    code, taps = run([(25, HOLD), (2, HOLD), (3, HOLD), ("cloud", HOLD), (5, SCOUT), (7, HOLD),
+    code, taps = run([(25, HOLD), (2, HOLD), (3, HOLD), ("cloud", HOLD), (SCOUT_AT, SCOUT), (7, HOLD),
                       (8, SETTLE + 2), ("cloud", HOLD), 25])
-    deploy = expected_deploy(frame(5))
+    deploy = expected_deploy(frame(SCOUT_AT))
 
     assert code == 0
-    assert as_planned(taps[3 : 3 + len(deploy)], frame(5)) == deploy  # after the 3 navigation taps
+    assert as_planned(taps[3 : 3 + len(deploy)], frame(SCOUT_AT)) == deploy  # after the 3 navigation taps
     assert taps[3 + len(deploy) :] == [RETURN_HOME]  # once: the gate holds the later result frames
 
 
 def test_hero_abilities_fire_once_in_battle(run, frame, monkeypatch):
     monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 0.0)
-    code, taps = run([(5, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 25])
-    deploy = expected_deploy(frame(5))
-    heroes = [s.centre for s, (kind, _) in zip(deck_slots(frame(5)), main.DECK) if kind == "hero"]
+    code, taps = run([(SCOUT_AT, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 25])
+    deploy = expected_deploy(frame(SCOUT_AT))
+    heroes = [s.centre for s, (kind, _) in zip(deck_slots(frame(SCOUT_AT)), main.DECK) if kind == "hero"]
 
     assert code == 0
     assert taps[len(deploy) :] == [*heroes, RETURN_HOME]  # first battle frame; abilities are never gated
@@ -109,24 +110,39 @@ def test_hero_abilities_fire_once_in_battle(run, frame, monkeypatch):
 
 def test_deck_that_does_not_match_DECK_aborts_without_tapping(run, monkeypatch):
     monkeypatch.setattr(main, "DECK", main.DECK[:-1])
-    code, taps = run([(5, SCOUT)])
+    code, taps = run([(SCOUT_AT, SCOUT)])
     assert code == 1
     assert taps == []
 
 
 def test_long_battle_does_not_use_up_patience(run):
-    code, _ = run([(5, SCOUT), (7, PATIENCE_FRAMES + 2), "cloud", (8, SETTLE + 2), ("cloud", HOLD), 25])
+    code, _ = run([(SCOUT_AT, SCOUT), (7, PATIENCE_FRAMES + 2), "cloud", (8, SETTLE + 2), ("cloud", HOLD), 25])
     assert code == 0
+
+
+def no_outline(scout):
+    """A scout frame with the map painted flat grass outside the UI, as before the red outline is
+    drawn: readable loot, but no deploy points."""
+
+    image = scout.copy()
+    keep = np.zeros(image.shape[:2], bool)
+    for x0, y0, x1, y1 in UI_RECTS:
+        keep[y0:y1, x0:x1] = True
+    image[~keep] = (60, 160, 90)
+    return image
 
 
 def test_no_outline_means_no_taps(run, frame):
-    code, taps = run([(4, SCOUT), (5, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 25])
+    blank = no_outline(frame(SCOUT_AT))
+    assert not deploy_points(blank)
+    code, taps = run([(blank, SCOUT), (SCOUT_AT, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 25])
     assert code == 0
-    assert taps[0] == deck_slots(frame(5))[0].centre != deck_slots(frame(4))[0].centre
+    assert taps[0] == deck_slots(frame(SCOUT_AT))[0].centre  # deployed only once the outline appeared
+    assert len(taps) == len(expected_deploy(frame(SCOUT_AT))) + 1  # one deploy, then Return Home
 
 
 def test_result_is_counted_only_once_it_settles(run, capsys):
-    code, taps = run([(5, SCOUT), (7, HOLD), (18, HOLD), (19, SETTLE + 2), ("cloud", HOLD), 25])
+    code, taps = run([(SCOUT_AT, SCOUT), (7, HOLD), (18, HOLD), (19, SETTLE + 2), ("cloud", HOLD), 25])
     out = capsys.readouterr().out
 
     assert code == 0
@@ -145,22 +161,22 @@ def faded(scout):
 
 
 def test_cloud_fade_over_the_loot_panel_is_waited_out(run, frame):
-    code, taps = run([(faded(frame(5)), 5), (5, SCOUT)])
-    assert taps and taps[0] == deck_slots(frame(5))[0].centre
+    code, taps = run([(faded(frame(SCOUT_AT)), 5), (SCOUT_AT, SCOUT)])
+    assert taps and taps[0] == deck_slots(frame(SCOUT_AT))[0].centre
     assert NEXT not in taps
 
 
 def test_panel_that_stays_unreadable_is_skipped(run, frame):
-    code, taps = run([(faded(frame(5)), math.ceil(main.SCOUT_UNREADABLE_SECONDS / STEP) + 2)])
+    code, taps = run([(faded(frame(SCOUT_AT)), math.ceil(main.SCOUT_UNREADABLE_SECONDS / STEP) + 2)])
     assert taps == [NEXT]
 
 
 def test_each_judged_base_is_saved_once(run, frame, tmp_path):
     skipped = math.ceil(main.SCOUT_UNREADABLE_SECONDS / STEP) + 2
-    run([(faded(frame(5)), skipped + HOLD), ("cloud", HOLD), (5, SCOUT + HOLD)])
+    run([(faded(frame(SCOUT_AT)), skipped + HOLD), ("cloud", HOLD), (SCOUT_AT, SCOUT + HOLD)])
     scout = tmp_path / "scout"
     rows = list(csv.DictReader((scout / "index.csv").open()))
-    loot = main.read_loot(frame(5), main.load_digit_templates())
+    loot = main.read_loot(frame(SCOUT_AT), main.load_digit_templates())
 
     assert [r["decision"] for r in rows] == ["next", "attack"]  # not again while the gate holds each base
     assert rows[0]["gold"] == "" and rows[1]["gold"] == str(loot.gold)

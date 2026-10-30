@@ -43,7 +43,8 @@ class Panel:
 
 LOOT_FONT = Font(min_h=18, max_h=28, min_w=6, max_w=26, min_area=30, canvas=(26, 22), space_gap=7)
 LOOT_X = (95, 420)
-ROW_BANDS = ((148, 192), (205, 245), (262, 300))  # gold, elixir, dark elixir
+# gold, elixir, dark elixir. The 2026-10-29 UI revamp moved the panel up 14 px (legacy: 148, 205, 262).
+ROW_BANDS = ((134, 178), (191, 231), (248, 286))
 LOOT_PANEL = Panel(LOOT_X, ROW_BANDS, LOOT_FONT)
 
 MAX_SHIFT = 2
