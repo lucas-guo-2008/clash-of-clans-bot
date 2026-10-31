@@ -26,7 +26,8 @@ import cv2
 
 from capture.adb import connect, grab_frame
 from control.tap import tap_match, tap_point
-from policy.navigator import ABORT, DEPLOY, GATE_TIMEOUT, PATIENCE_SECONDS, TAP, WAIT, Action, decide, gate_open
+from policy.navigator import (ABORT, DEPLOY, GATE_TIMEOUT, PATIENCE_SECONDS, TAP, WAIT, Action, battle_stalled, decide,
+                              gate_open)
 from vision.anchors import THRESHOLD, Match, peak_scores
 from vision.buildings import MODEL_PATH, Building, detect_buildings, load_detector
 from vision.buttons import load_button_templates
@@ -154,11 +155,12 @@ def save_base(frame, reading: LootReading, decision: str, buildings: list[Buildi
 
 
 def save_battle(frame, result: LootReading, base_id: str | None, battle_seconds: float | None,
-                trace: list[list]) -> None:
+                trace: list[list], ended_early: bool) -> None:
     """Log a settled result to battles.jsonl with its frame, so a misread "You got" can be read
     again. `base` is the attacked base's id in bases.jsonl; None (and no duration) when this run
     did not deploy the army, e.g. it was started mid-battle. `trace` is the battle screen's
-    Available Loot each time it changed, as [seconds since deploy, gold, elixir, dark elixir]."""
+    Available Loot each time it changed, as [seconds since deploy, gold, elixir, dark elixir].
+    `ended_early` is True when the bot ended the battle on a loot stall rather than the timer."""
 
     stamp = f"{datetime.now():%Y%m%d_%H%M%S_%f}"
     frame_file = f"result_{stamp}.png"
@@ -171,6 +173,7 @@ def save_battle(frame, result: LootReading, base_id: str | None, battle_seconds:
         # From the army going down to "You got" settling: includes the count-up and RESULT_SETTLE_SECONDS.
         "battle_seconds": None if battle_seconds is None else round(battle_seconds, 1),
         "loot_trace": trace,
+        "ended_early": ended_early,  # a stall the rule misjudged shows as loot cut short here
         "frame": frame_file,
     })
 
@@ -255,6 +258,7 @@ def main() -> int:
     ability_at = 0.0
     attacked_id, deployed_at = None, None  # the base under attack (bases.jsonl id), and when its army went down
     trace: list[list] = []  # this battle's Available Loot readings, one per change (Phase 5f's stall window)
+    ended_early = False  # the bot tapped End Battle / Surrender on this battle
     looted = (0, 0, 0)  # gold, elixir, dark elixir over every readable result
     searches = 0
     started = clock()
@@ -327,7 +331,13 @@ def main() -> int:
             print(run_summary(looted, searches, (clock() - started) / 60))
             return 0
 
-        action = decide(screen, settled if screen is Screen.RESULT else scout_settled, unknown_seconds)
+        # Phase 5f: once the whole army is down and every ability used, end a battle that stopped paying.
+        end_with = None
+        if screen is Screen.BATTLE and deployed_at is not None and not heroes:
+            if battle_stalled(trace, now - deployed_at):
+                end_with = "end-battle" if "end-battle" in matches else "surrender"  # End Battle once a star is won
+
+        action = decide(screen, settled if screen is Screen.RESULT else scout_settled, unknown_seconds, end_with)
         judged = scout_settled is not None and not scout_saved
         if judged:
             buildings = detect_buildings(frame, detector)
@@ -356,8 +366,9 @@ def main() -> int:
             got = f"{result.gold}/{result.elixir}/{result.dark_elixir}" if result.ok else "UNREADABLE (not counted)"
             print(f"        battle {battles} got {got}")
             print(f"        {run_summary(looted, searches, (clock() - started) / 60)}")
-            save_battle(frame, result, attacked_id, None if deployed_at is None else now - deployed_at, trace)
-            attacked_id, deployed_at, trace = None, None, []
+            save_battle(frame, result, attacked_id, None if deployed_at is None else now - deployed_at, trace,
+                        ended_early)
+            attacked_id, deployed_at, trace, ended_early = None, None, [], False
 
         # One frame per unrecognized stretch that outlasts a cloud, plus the one it gives up on
         # (usually a popup). Clouds between screens clear on their own and are not worth keeping.
@@ -397,6 +408,8 @@ def main() -> int:
             tapped_on, tapped_at = screen, clock()
             if action.anchor in ("find-match", "next-button"):
                 searches += 1
+            if action.anchor in ("end-battle", "surrender"):
+                ended_early = True
         elif action.kind == DEPLOY:
             if not points:
                 print("        no deploy points on this frame, retrying")

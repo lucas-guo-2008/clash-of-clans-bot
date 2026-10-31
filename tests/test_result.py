@@ -12,6 +12,7 @@ YOU_GOT = {
     20: (462_138, 461_718, 3_720),
     21: (639_108, 625_000, 6_491),  # held back
     22: (300_417, 123_312, 1_342),  # held back
+    40: (484_980, 541_902, 8_870),  # ended early via End Battle -> Okay; scout shown minus frame 38's left
 }
 
 

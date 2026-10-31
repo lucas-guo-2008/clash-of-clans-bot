@@ -8,13 +8,15 @@ import numpy as np
 import pytest
 
 import main
-from policy.navigator import GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS
+from policy.navigator import GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS, STALL_SECONDS
 from vision.deploy import UI_RECTS, deck_slots, deploy_points
 
 CLOUD = "unknown_20260919_005725_732450.png"
 BATTLE = (126, 1026)  # home, revamped UI (frame 25)
 FIND_MATCH = (329, 802)
 RETURN_HOME = (961, 925)  # centre of the return-home match
+END_BATTLE = (137, 807)  # centre of the end-battle match
+OKAY = (1166, 692)  # centre of the okay match on the End Battle? popup
 
 STEP = 0.2
 HOLD = GATE_STABLE_FRAMES + 1
@@ -23,6 +25,7 @@ SCOUT = math.ceil(main.SCOUT_SETTLE_SECONDS / STEP) + 2  # scout frames until a 
 NEXT = (1749, 771)  # centre of the Next button
 SCOUT_AT = 24  # a readable base with an outline, in the revamped UI
 PATIENCE_FRAMES = math.ceil(PATIENCE_SECONDS / STEP) + 1  # unknown frames until the bot gives up
+STALL = math.ceil(STALL_SECONDS / STEP) + 5  # battle frames with unchanged loot until the bot ends it
 
 
 class FakeDevice:
@@ -204,13 +207,14 @@ def test_battle_is_logged_against_the_base_it_attacked(run, frame, tmp_path):
     assert battle["base"] == base["id"] and base["decision"] == "attack"
     assert battle["got"] == {"gold": got.gold, "elixir": got.elixir, "dark_elixir": got.dark_elixir}
     assert (tmp_path / "scout" / battle["frame"]).exists()
+    assert battle["ended_early"] is False
     frames = sum(n for _, n in sequence[:3])
     assert main.RESULT_SETTLE_SECONDS < battle["battle_seconds"] < frames * STEP  # deploy to settled result
 
 
 def battle_showing(battle, scout):
-    """A battle frame with a revamped-UI loot panel: the saved battle frames predate the revamp, so
-    their panel reads unreadable. Assumes the panel sits where it does on the scout screen."""
+    """A battle frame showing another base's loot panel, so a battle can show two readings. Frame 7
+    predates the revamp (its own panel reads unreadable); frame 38 proves the positions match."""
 
     image = battle.copy()
     image[0:320, 0:450] = scout[0:320, 0:450]
@@ -312,3 +316,23 @@ def test_one_frame_flicker_does_not_release_the_gate(run):
 def test_a_new_screen_held_for_two_frames_releases_the_gate(run):
     _, taps = run([25, (2, GATE_STABLE_FRAMES)])
     assert taps == [BATTLE, FIND_MATCH]
+
+
+def test_stalled_battle_is_ended_and_logged(run, frame, tmp_path):
+    code, taps = run([(SCOUT_AT, SCOUT), (38, STALL), (39, HOLD), (40, SETTLE + 2), ("cloud", HOLD), 25])
+    deploy = expected_deploy(frame(SCOUT_AT))
+    heroes = [s.centre for s, (kind, _) in zip(deck_slots(frame(SCOUT_AT)), main.DECK) if kind == "hero"]
+    [battle] = read_log(tmp_path, main.BATTLES_LOG)
+
+    assert code == 0
+    assert taps[len(deploy) :] == [*heroes, END_BATTLE, OKAY, RETURN_HOME]  # End Battle once, then confirm
+    assert battle["ended_early"] is True
+    assert [t[1:] for t in battle["loot_trace"]] == [[179_550, 129_210, 500]]  # the popup's dimmed panel adds nothing
+
+
+def test_battle_still_paying_is_not_ended(run, frame):
+    # The loot changes just before the window runs out, which restarts it.
+    paying = battle_showing(frame(38), frame(SCOUT_AT))
+    code, taps = run([(SCOUT_AT, SCOUT), (38, STALL - 10), (paying, STALL - 10), (40, SETTLE + 2), ("cloud", HOLD), 25])
+    assert code == 0
+    assert END_BATTLE not in taps

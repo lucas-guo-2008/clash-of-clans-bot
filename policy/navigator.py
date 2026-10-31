@@ -10,6 +10,7 @@ PATIENCE_SECONDS = 20.0
 
 GATE_TIMEOUT = 4.0  # s; after this the tap is assumed missed and may be repeated
 GATE_STABLE_FRAMES = 2  # a new screen must hold this many frames: a one-frame misread can't release it
+STALL_SECONDS = 30.0  # Available Loot unchanged this long ends the battle (longest live mid-battle gap: 17.6 s)
 
 TAP = "tap"
 WAIT = "wait"
@@ -24,9 +25,11 @@ class Action:
     why: str = ""
 
 
-def decide(screen: Screen, reading: LootReading | None, unknown_seconds: float) -> Action:
+def decide(screen: Screen, reading: LootReading | None, unknown_seconds: float,
+           end_with: str | None = None) -> Action:
     """Given a screen, the loot showing on it, and how long we have
-    been lost, return an action."""
+    been lost, return an action. `end_with` is the button
+    that ends this battle (End Battle or Surrender), once main.py has judged it stalled."""
 
     if screen is Screen.HOME:
         return Action(TAP, "battle", "open the attack menu")
@@ -45,7 +48,12 @@ def decide(screen: Screen, reading: LootReading | None, unknown_seconds: float) 
         return Action(TAP, "next-button", "spend 900 on the next base")
 
     if screen is Screen.BATTLE:
+        if end_with is not None:
+            return Action(TAP, end_with, "loot has stopped coming, end the battle")
         return Action(WAIT, why="battle in progress")
+
+    if screen is Screen.END_CONFIRM:
+        return Action(TAP, "okay", "confirm ending the battle")
 
     if screen is Screen.RESULT:
         if reading is None:
@@ -65,3 +73,14 @@ def gate_open(screen: Screen, tapped_on: Screen | None, seconds_since_tap: float
     if tapped_on is None or seconds_since_tap >= GATE_TIMEOUT:
         return True
     return screen is not tapped_on and frames_on_screen >= GATE_STABLE_FRAMES
+
+
+def battle_stalled(trace: list[list], since_deploy: float) -> bool:
+    """Has this battle stopped paying? Asked only once every card is down and every hero ability
+    used. `trace` is the Available Loot each time it changed, as [seconds since deploy, gold,
+    elixir, dark elixir]; empty if the panel never read, and then the deploy is the last change.
+    End Battle vs Surrender says nothing here: the button flips at the first star, not when the
+    army is dead."""
+
+    last_change = trace[-1][0] if trace else 0.0
+    return since_deploy - last_change >= STALL_SECONDS

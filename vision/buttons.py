@@ -17,6 +17,7 @@ BUTTON_AT = {
     "end-battle": (30, 773),
     "surrender": (50, 788),
     "return-home": (895, 895),
+    "okay": (1099, 672),  # "Okay" lettering on the End Battle? confirmation (frame 39)
 }
 SEARCH_MARGIN = 40
 

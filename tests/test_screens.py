@@ -14,6 +14,9 @@ SCREENS = {
     **{n: "result" for n in range(18, 23)},
     1: "unknown", 23: "unknown",  # pre-revamp home (Attack!), no longer matched
     25: "home",  # revamped home: "Battle" lettering, same spot; the screens after it are unchanged
+    38: "battle",  # revamped battle, army spent: the button reads End Battle again, not Surrender
+    39: "end_confirm",  # End Battle? modal over frame 38; end-battle still 1.000 behind the dimming
+    40: "result",  # after Okay
 }
 
 UNRECOGNIZED = [

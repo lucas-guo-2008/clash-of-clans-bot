@@ -21,6 +21,7 @@ LOOT = {
     35: (718_149, 718_149, 5_243),
     36: (714_386, 456_647, 8_137),
     37: (698_001, 848_390, 9_174),
+    38: (179_550, 129_210, 500),  # battle screen: Available Loot left, at the scout panel's positions
 }
 
 # Scout frames from before the revamp, panel 14 px lower. They read exactly at the legacy bands.
@@ -42,6 +43,10 @@ def test_legacy_panel_fails_closed(frame, digits, n):
 @pytest.mark.parametrize("n", [1, 3, 8])  # home, army, result: no loot panel
 def test_no_panel_is_not_a_reading(frame, digits, n):
     assert not read_loot(frame(n), digits).ok
+
+
+def test_panel_dimmed_by_a_modal_fails_closed(frame, digits):
+    assert not read_loot(frame(39), digits).ok  # frame 38's panel under the End Battle? modal
 
 
 def test_resized_frame_is_refused(frame, digits):

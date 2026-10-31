@@ -2,7 +2,8 @@
 
 import pytest
 
-from policy.navigator import ABORT, DEPLOY, GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS, TAP, WAIT, decide, gate_open
+from policy.navigator import (ABORT, DEPLOY, GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS, STALL_SECONDS, TAP,
+                              WAIT, battle_stalled, decide, gate_open)
 from policy.thresholds import MIN_DARK, MIN_ELIXIR, MIN_GOLD, should_attack
 from vision.loot import LootReading
 from vision.screens import Screen
@@ -20,6 +21,7 @@ RICH = loot(MIN_GOLD, MIN_ELIXIR, MIN_DARK)
     (Screen.ARMY, TAP, "attack-button"),
     (Screen.ATTACK_MENU, TAP, "find-match"),
     (Screen.BATTLE, WAIT, None),
+    (Screen.END_CONFIRM, TAP, "okay"),
 ])
 def test_each_screen_has_its_action(screen, kind, anchor):
     action = decide(screen, None, 0)
@@ -69,3 +71,22 @@ def test_unknown_waits_out_its_patience_then_aborts():
 ])
 def test_gate(screen, tapped_on, since, frames, want):
     assert gate_open(screen, tapped_on, since, frames) is want
+
+
+@pytest.mark.parametrize("anchor", ["end-battle", "surrender"])
+def test_stalled_battle_is_ended_with_the_button_showing(anchor):
+    action = decide(Screen.BATTLE, None, 0, end_with=anchor)
+    assert (action.kind, action.anchor) == (TAP, anchor)
+
+
+TRACE = [[0.4, 600_000, 600_000, 6_000], [20.0, 300_000, 300_000, 3_000]]
+
+
+def test_stall_counts_from_the_last_loot_change():
+    assert not battle_stalled(TRACE, 20.0 + STALL_SECONDS - 0.1)
+    assert battle_stalled(TRACE, 20.0 + STALL_SECONDS)
+
+
+def test_unread_panel_counts_from_the_deploy():
+    assert not battle_stalled([], STALL_SECONDS - 0.1)
+    assert battle_stalled([], STALL_SECONDS)
