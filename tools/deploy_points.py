@@ -6,16 +6,12 @@ rays hit and the points drawn over each frame (any key for the next one).
 """
 
 import argparse
-import sys
 from pathlib import Path
 
 import cv2
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-
-from vision.deploy import UI_RECTS, deck_slots, deploy_points, outline_lines, outline_mask  # noqa: E402
-from vision.overlay import draw_deploy  # noqa: E402
+from vision.deploy import UI_RECTS, deck_slots, deploy_points, outline_lines, outline_mask
+from vision.overlay import draw_deploy
 
 
 def main() -> None:

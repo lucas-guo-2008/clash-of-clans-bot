@@ -7,17 +7,13 @@ Expected screens live in tests/test_screens.py.
 """
 
 import argparse
-import sys
 from pathlib import Path
 
 import cv2
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-
-from vision.anchors import THRESHOLD, peak_scores  # noqa: E402
-from vision.buttons import load_button_templates  # noqa: E402
-from vision.screens import classify  # noqa: E402
+from vision.anchors import THRESHOLD, peak_scores
+from vision.buttons import load_button_templates
+from vision.screens import classify
 
 
 def main() -> None:

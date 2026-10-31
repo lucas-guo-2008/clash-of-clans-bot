@@ -6,9 +6,9 @@ Writes a YOLO folder Roboflow imports with its boxes as annotations:
   <out>/labels/<stem>.txt   one `cls cx cy w h` line per box, normalized
   <out>/data.yaml           the model's class order (= the export's)
 
-CONF is low on purpose: deleting a wrong box is faster than drawing a missed one. A base has
-one Town Hall, Clan Castle and Dark Elixir Storage, so only the most confident box of each is
-kept -- the detector has no NMS and sometimes doubles them.
+Boxes come from vision.buildings.detect_buildings, so they are exactly what the bot would see:
+its CONF (low on purpose -- deleting a wrong box is faster than drawing a missed one), and only
+the most confident Town Hall, Clan Castle and Dark Elixir Storage.
 
 Typical use:
 
@@ -19,26 +19,19 @@ import argparse
 import sys
 from pathlib import Path
 
+import cv2
 from ultralytics import YOLO
 
-IMGSZ = 1280
-DEVICE = "mps"
-CONF = 0.25
-SINGLETONS = {"town_hall", "clan_castle", "dark_elixir_storage"}
+from vision.buildings import FRAME_SIZE, Building, detect_buildings
 
 
-def label_lines(result, names: dict[int, str]) -> list[str]:
-    boxes = sorted(zip(result.boxes.cls.tolist(), result.boxes.conf.tolist(),
-                       result.boxes.xywhn.tolist()), key=lambda b: -b[1])
-    lines, seen = [], set()
-    for cls, _, (cx, cy, w, h) in boxes:
-        cls = int(cls)
-        if names[cls] in SINGLETONS:
-            if cls in seen:
-                continue
-            seen.add(cls)
-        lines.append(f"{cls} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}")
-    return lines
+def label_lines(buildings: list[Building], names: dict[int, str]) -> list[str]:
+    """One `cls cx cy w h` line per box, normalized to the frame."""
+
+    h, w = FRAME_SIZE
+    index = {name: cls for cls, name in names.items()}
+    return [f"{index[b.name]} {(b.x0 + b.x1) / 2 / w:.6f} {(b.y0 + b.y1) / 2 / h:.6f} "
+            f"{(b.x1 - b.x0) / w:.6f} {(b.y1 - b.y0) / h:.6f}" for b in buildings]
 
 
 def main() -> None:
@@ -57,10 +50,8 @@ def main() -> None:
     model = YOLO(args.model)
     names = model.names
     n_boxes = 0
-    results = model.predict([str(f) for f in frames], imgsz=IMGSZ, device=DEVICE, conf=CONF,
-                            stream=True, verbose=False)
-    for frame, result in zip(frames, results):
-        lines = label_lines(result, names)
+    for frame in frames:
+        lines = label_lines(detect_buildings(cv2.imread(str(frame)), model), names)
         (args.out / "images" / frame.name).hardlink_to(frame)
         (args.out / "labels" / f"{frame.stem}.txt").write_text("".join(f"{l}\n" for l in lines))
         n_boxes += len(lines)

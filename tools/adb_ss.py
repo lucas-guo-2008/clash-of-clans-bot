@@ -1,18 +1,16 @@
 """
 Useful for grabbing frames using ADB for template files.
-Open BlueStacks, run this file, enter a file prefix, and use 's' for save, 'q' to quit.
+Open BlueStacks, run `python -m tools.adb_ss`, enter a file prefix, and use 's' for save, 'q' to quit.
 Frames get saved to templates/initial_collection/<prefix>_<index>.png.
 """
 
-import sys
 from pathlib import Path
 
 import cv2
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+from capture.adb import connect, grab_frame
 
-from capture.adb import connect, grab_frame  # noqa: E402
+ROOT = Path(__file__).resolve().parent.parent
 
 OUT_DIR = ROOT / "templates" / "initial_collection"
 

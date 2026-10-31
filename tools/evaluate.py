@@ -21,11 +21,10 @@ from pathlib import Path
 
 from ultralytics import YOLO
 
+from vision.buildings import CONF, DEVICE, IMGSZ
+
 ROOT = Path(__file__).resolve().parent.parent
 EVAL_DIR = ROOT / "runs" / "eval"
-IMGSZ = 1280
-DEVICE = "mps"
-CONF = 0.25
 
 
 def map_view(model: YOLO, data: str, split: str, name: str) -> None:

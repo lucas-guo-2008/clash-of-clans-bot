@@ -5,16 +5,12 @@ Read the loot panel from saved frames, offline. Expected values live in tests/te
 """
 
 import argparse
-import sys
 from pathlib import Path
 
 import cv2
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-
-from vision.glyphs import load_digit_templates  # noqa: E402
-from vision.loot import ROW_NAMES, read_loot  # noqa: E402
+from vision.glyphs import load_digit_templates
+from vision.loot import ROW_NAMES, read_loot
 
 
 def main() -> None:
