@@ -1,4 +1,4 @@
-"""Loading and building the digit template set.
+"""Loading the digit template set (tools/extract_digits.py builds it).
 Templates are stored as binary PNGs (0 or 255) of the glyphs
 """
 
@@ -36,19 +36,3 @@ def load_digit_templates(directory: Path = DIGITS_DIR, font: Font = LOOT_FONT) -
             "Capture more frames containing them and run tools/extract_digits.py"
         )
     return templates
-
-
-def majority_vote(samples: list[np.ndarray]) -> np.ndarray:
-    """Combine several samples of one digit into a template, because 5 and 9 are too similar."""
-
-    stack = np.stack(samples).astype(np.uint16)
-    return (stack.sum(axis=0) * 2 > len(samples)).astype(np.uint8)
-
-
-def save_template(canvas: np.ndarray, digit: str, directory: Path = DIGITS_DIR) -> Path:
-    """Write one glyph out as a binary PNG."""
-
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{digit}.png"
-    cv2.imwrite(str(path), canvas.astype(np.uint8) * 255)
-    return path

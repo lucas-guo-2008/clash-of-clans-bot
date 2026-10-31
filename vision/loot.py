@@ -102,7 +102,7 @@ def binarize(roi: np.ndarray) -> np.ndarray:
     return ((low > WHITE_MIN) & ((high - low) < TINT_TOL)).astype(np.uint8)
 
 
-def segment_glyphs(mask: np.ndarray, font: Font = LOOT_FONT) -> list[Glyph]:
+def segment_glyphs(mask: np.ndarray, font: Font) -> list[Glyph]:
     """Split a binarized row into individual digits, left to right.
 
     Each glyph carries a black outline in COC's font, so connected components
@@ -127,7 +127,7 @@ def segment_glyphs(mask: np.ndarray, font: Font = LOOT_FONT) -> list[Glyph]:
     return glyphs
 
 
-def canonicalize(glyph: Glyph, font: Font = LOOT_FONT) -> np.ndarray:
+def canonicalize(glyph: Glyph, font: Font) -> np.ndarray:
     """Paste a glyph into a fixed canvas: top-aligned, horizontally centred."""
 
     canvas_h, canvas_w = font.canvas
@@ -172,7 +172,7 @@ def classify(canvas: np.ndarray, templates: dict[str, np.ndarray]) -> tuple[str,
     return best_digit, best_score, best_score - runner_up
 
 
-def group_sizes(glyphs: list[Glyph], font: Font = LOOT_FONT) -> list[int]:
+def group_sizes(glyphs: list[Glyph], font: Font) -> list[int]:
     """Digit counts get split on the wide blank spaces (which separate thousands)."""
 
     sizes = [1]
@@ -192,7 +192,7 @@ def grouping_is_valid(sizes: list[int]) -> bool:
     return all(size == 3 for size in sizes[1:])
 
 
-def parse_row(row_mask: np.ndarray, templates: dict[str, np.ndarray], font: Font = LOOT_FONT) -> RowRead:
+def parse_row(row_mask: np.ndarray, templates: dict[str, np.ndarray], font: Font) -> RowRead:
     """Read one binarized loot row."""
 
     glyphs = segment_glyphs(row_mask, font)

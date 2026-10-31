@@ -24,13 +24,10 @@ import sys
 from pathlib import Path
 
 import cv2
+import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-
-from vision.glyphs import DIGITS, DIGITS_DIR, majority_vote, save_template  # noqa: E402
-from vision.loot import (  # noqa: E402
-    LOOT_FONT,
+from vision.glyphs import DIGITS, DIGITS_DIR
+from vision.loot import (
     LOOT_PANEL,
     ROW_NAMES,
     Font,
@@ -39,7 +36,9 @@ from vision.loot import (  # noqa: E402
     canonicalize,
     segment_glyphs,
 )
-from vision.result import RESULT_DIGITS_DIR, RESULT_PANEL  # noqa: E402
+from vision.result import RESULT_DIGITS_DIR, RESULT_PANEL
+
+ROOT = Path(__file__).resolve().parent.parent
 
 SAMPLES_DIR = ROOT / "templates" / "digit_samples"
 
@@ -49,7 +48,23 @@ PANELS = {
 }
 
 
-def save_samples(glyphs, expected, frame_stem, tag, samples_dir: Path, font: Font = LOOT_FONT) -> int:
+def majority_vote(samples: list[np.ndarray]) -> np.ndarray:
+    """Combine several samples of one digit into a template, because 5 and 9 are too similar."""
+
+    stack = np.stack(samples).astype(np.uint16)
+    return (stack.sum(axis=0) * 2 > len(samples)).astype(np.uint8)
+
+
+def save_template(canvas: np.ndarray, digit: str, directory: Path) -> Path:
+    """Write one glyph out as a binary PNG."""
+
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{digit}.png"
+    cv2.imwrite(str(path), canvas.astype(np.uint8) * 255)
+    return path
+
+
+def save_samples(glyphs, expected, frame_stem, tag, samples_dir: Path, font: Font) -> int:
     for index, (glyph, digit) in enumerate(zip(glyphs, expected)):
         out_dir = samples_dir / digit
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -57,7 +72,7 @@ def save_samples(glyphs, expected, frame_stem, tag, samples_dir: Path, font: Fon
     return len(glyphs)
 
 
-def cut(frame_path: Path, values: dict[str, str | None], samples_dir: Path, panel: Panel = LOOT_PANEL) -> int:
+def cut(frame_path: Path, values: dict[str, str | None], samples_dir: Path, panel: Panel) -> int:
     frame = cv2.imread(str(frame_path))
     if frame is None:
         raise SystemExit(f"could not read {frame_path}")
@@ -84,34 +99,10 @@ def cut(frame_path: Path, values: dict[str, str | None], samples_dir: Path, pane
     return saved
 
 
-def cut_band(frame_path: Path, value: str, band: tuple[int, int, int, int], samples_dir: Path) -> int:
-    """Cut one arbitrary row of digits."""
-
-    frame = cv2.imread(str(frame_path))
-    if frame is None:
-        raise SystemExit(f"could not read {frame_path}")
-
-    y0, y1, x0, x1 = band
-    glyphs = segment_glyphs(binarize(frame[y0:y1, x0:x1]))
-    if len(glyphs) != len(value):
-        raise SystemExit(
-            f"segmented {len(glyphs)} glyphs (h={[g.h for g in glyphs]}) but '{value}' has "
-            f"{len(value)} digits -- adjust the band"
-        )
-    if not all(22 <= g.h <= 25 for g in glyphs):
-        raise SystemExit(
-            f"glyph heights {[g.h for g in glyphs]} are outside the loot panel's 22-24 px. "
-            "A different font size would need rescaling, which is what makes it unusable."
-        )
-    saved = save_samples(glyphs, value, frame_path.stem, "band", samples_dir)
-    print(f"  band {band}: {len(glyphs)} glyphs -> {value}")
-    return saved
-
-
 CONSISTENT = 0.95
 
 
-def build(samples_dir: Path, templates_dir: Path = DIGITS_DIR) -> None:
+def build(samples_dir: Path, templates_dir: Path) -> None:
     missing, suspect = [], []
     for digit in DIGITS:
         paths = sorted((samples_dir / digit).glob("*.png")) if (samples_dir / digit).is_dir() else []
@@ -155,16 +146,6 @@ def main() -> None:
     cut_parser.add_argument("--gold", help="gold value as shown, digits only")
     cut_parser.add_argument("--elixir", help="elixir value as shown, digits only")
     cut_parser.add_argument("--dark", help="dark elixir value as shown, digits only")
-    cut_parser.add_argument(
-        "--value", help="digits of one arbitrary row, used with --band"
-    )
-    cut_parser.add_argument(
-        "--band",
-        nargs=4,
-        type=int,
-        metavar=("Y0", "Y1", "X0", "X1"),
-        help="cut one row from this box instead of the standard loot rows",
-    )
 
     sub.add_parser("build", help="majority-vote samples into templates/digits")
 
@@ -173,17 +154,10 @@ def main() -> None:
 
     if args.command == "cut":
         print(f"{args.frame}:")
-        if bool(args.band) != bool(args.value):
-            raise SystemExit("--band and --value go together")
-        if args.band:
-            if args.panel != "loot":
-                raise SystemExit("--band cuts loot-panel-sized digits only")
-            saved = cut_band(args.frame, args.value, tuple(args.band), samples_dir)
-        else:
-            values = {"gold": args.gold, "elixir": args.elixir, "dark_elixir": args.dark}
-            if not any(values.values()):
-                raise SystemExit("pass at least one of --gold/--elixir/--dark, or --value with --band")
-            saved = cut(args.frame, values, samples_dir, panel)
+        values = {"gold": args.gold, "elixir": args.elixir, "dark_elixir": args.dark}
+        if not any(values.values()):
+            raise SystemExit("pass at least one of --gold/--elixir/--dark")
+        saved = cut(args.frame, values, samples_dir, panel)
         print(f"saved {saved} glyph sample(s) to {samples_dir.relative_to(ROOT)}")
     else:
         build(samples_dir, templates_dir)
