@@ -4,10 +4,11 @@ drop the first card's troops around it -> wait out the battle -> Return Home, IT
 
   python main.py --dry-run
   python main.py
-  python main.py --show      # live window: screen, scores, deploy points, next tap
+  python main.py --show      # live window: screen, scores, buildings, deploy points, next tap
 
-Stops back home after ITERATIONS battles. After each
-battle it prints what "You got" showed, and a running summary of the run.
+Stops back home after ITERATIONS battles. Prints the buildings detected on each judged base
+(nothing decides on them yet). After each battle it prints what "You got" showed, and a
+running summary of the run.
 """
 
 import argparse
@@ -15,6 +16,7 @@ import csv
 import itertools
 import sys
 import time
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -24,11 +26,13 @@ from capture.adb import connect, grab_frame
 from control.tap import tap_match, tap_point
 from policy.navigator import ABORT, DEPLOY, GATE_TIMEOUT, PATIENCE_SECONDS, TAP, WAIT, Action, decide, gate_open
 from vision.anchors import THRESHOLD, Match, peak_scores
+from vision.buildings import Building, detect_buildings, load_detector
 from vision.buttons import load_button_templates
 from vision.deploy import DeployPoint, deck_slots, deploy_points, outline_lines, outline_mask
 from vision.glyphs import load_digit_templates
 from vision.loot import LootReading, read_loot
-from vision.overlay import CYAN, GREEN, GREY, RED, WHITE, draw_anchors, draw_deploy, draw_tap, with_header
+from vision.overlay import (CYAN, GREEN, GREY, RED, WHITE, YELLOW, draw_anchors, draw_buildings, draw_deploy,
+                            draw_tap, with_header)
 from vision.result import load_result_templates, read_result
 from vision.screens import Screen, classify
 
@@ -63,6 +67,11 @@ def describe_loot(reading: LootReading) -> str:
         reasons = ",".join(row.reason for row in reading.rows if row.reason) or "?"
         return f"loot=UNREADABLE({reasons})"
     return f"loot={reading.gold}/{reading.elixir}/{reading.dark_elixir}"
+
+
+def describe_buildings(buildings: list[Building]) -> str:
+    counts = Counter(b.name for b in buildings)
+    return " ".join(f"{name}:{n}" for name, n in sorted(counts.items())) or "(none)"
 
 
 def run_summary(looted: tuple[int, int, int], searches: int, minutes: float) -> str:
@@ -119,6 +128,7 @@ def show(
     reading: LootReading | None,
     slots: list[Match],
     points: list[DeployPoint],
+    buildings: list[Building] | None,
     tap: tuple[int, int] | None,
     unknown_seconds: float,
     battles: int,
@@ -127,6 +137,7 @@ def show(
 
     image = frame.copy()
     if screen is Screen.SCOUT:
+        draw_buildings(image, buildings or [])
         labels = [(slot, f"{slot.label} {kind} x{count}") for slot, (kind, count) in zip(slots, DECK)]
         draw_deploy(image, outline_lines(outline_mask(frame)), points, labels)
     draw_anchors(image, peaks, THRESHOLD)
@@ -141,6 +152,8 @@ def show(
         status.append((describe_loot(reading), GREEN if reading.ok else RED))
     if screen is Screen.SCOUT:
         status.append((f"{len(points)} deploy points, {len(slots)}/{len(DECK)} cards", CYAN))
+        if buildings is not None:
+            status.append((f"{len(buildings)} buildings", YELLOW))
 
     rows = [
         [(f"step {step}", WHITE), (screen.value.upper(), RED if screen is Screen.UNKNOWN else GREEN),
@@ -167,6 +180,7 @@ def main() -> int:
     buttons = load_button_templates()
     digits = load_digit_templates()
     result_digits = load_result_templates()
+    detector = load_detector()
     device = connect()
     if args.show:
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
@@ -178,6 +192,7 @@ def main() -> int:
     settled = None  # this result screen's reading, once it held for RESULT_SETTLE_SECONDS
     scout_values, scout_since, scout_seen = None, 0.0, None  # this base's latest loot reading, since when, first seen
     scout_saved = False  # this base's frame is in SCOUT_DIR
+    buildings = None  # this base's detections, found once when it is judged
     heroes: list[Match] = []  # deployed hero cards whose ability has not been used yet
     ability_at = 0.0
     looted = (0, 0, 0)  # gold, elixir, dark elixir over every readable result
@@ -231,7 +246,7 @@ def main() -> int:
             elif not reading.ok and now - scout_seen >= SCOUT_UNREADABLE_SECONDS:
                 scout_settled = reading
         else:
-            scout_values, scout_seen, scout_saved = None, None, False
+            scout_values, scout_seen, scout_saved, buildings = None, None, False, None
 
         line = f"step {step:>3}  {screen.value:<12} {describe(matches)}"
         if reading is not None:
@@ -243,9 +258,11 @@ def main() -> int:
             return 0
 
         action = decide(screen, settled if screen is Screen.RESULT else scout_settled, unknown_seconds)
-        if scout_settled is not None and not scout_saved:
+        judged = scout_settled is not None and not scout_saved
+        if judged:
             save_scout(frame, scout_settled, "attack" if action.kind == DEPLOY else "next")
             scout_saved = True
+            buildings = detect_buildings(frame, detector)
 
         if tapped_on is not None and gate_open(screen, tapped_on, now - tapped_at, frames_on_screen):
             tapped_on = None
@@ -259,6 +276,8 @@ def main() -> int:
         if logged != last_logged:
             print(f"{line}  -> {action.kind}{target}  ({action.why})")
             last_logged = logged
+        if judged:
+            print(f"        buildings {describe_buildings(buildings)}")
 
         if result is not None:
             got = f"{result.gold}/{result.elixir}/{result.dark_elixir}" if result.ok else "UNREADABLE (not counted)"
@@ -282,7 +301,7 @@ def main() -> int:
             tap = slots[0].centre
 
         if args.show:
-            show(frame, step, screen, action, peaks, reading, slots, points, tap, unknown_seconds, battles)
+            show(frame, step, screen, action, peaks, reading, slots, points, buildings, tap, unknown_seconds, battles)
 
         if args.dry_run:
             if tap is not None:

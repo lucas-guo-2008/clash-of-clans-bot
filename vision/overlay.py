@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 
 from vision.anchors import Match
+from vision.buildings import Building
 from vision.deploy import DeployPoint
 
 GREEN = (80, 220, 80)
@@ -12,6 +13,7 @@ RED = (60, 60, 240)
 MAGENTA = (255, 0, 255)
 CYAN = (255, 255, 0)
 WHITE = (255, 255, 255)
+YELLOW = (0, 220, 255)
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 ROW_H = 38
@@ -45,6 +47,14 @@ def draw_deploy(image: np.ndarray, lines: np.ndarray, points: list[DeployPoint],
     for slot, text in slots:
         cv2.rectangle(image, (slot.x, slot.y), (slot.x + slot.w, slot.y + slot.h), GREEN, 3)
         label(image, text, (slot.x, slot.y - 10), GREEN)
+
+
+def draw_buildings(image: np.ndarray, buildings: list[Building]) -> None:
+    """Box, class and confidence for every detected building."""
+
+    for b in buildings:
+        cv2.rectangle(image, (b.x0, b.y0), (b.x1, b.y1), YELLOW, 2)
+        label(image, f"{b.name} {b.conf:.2f}", (b.x0, max(18, b.y0 - 6)), YELLOW, scale=0.45)
 
 
 def draw_tap(image: np.ndarray, xy: tuple[int, int]) -> None:

@@ -39,6 +39,9 @@ class OutOfFrames(Exception):
 
 @pytest.fixture
 def run(frame, unknown_frame, monkeypatch, tmp_path):
+    monkeypatch.setattr(main, "load_detector", lambda: None)
+    monkeypatch.setattr(main, "detect_buildings", lambda frame, model: [])
+
     def play(sequence):
         cache = {}
 
@@ -181,6 +184,18 @@ def test_each_judged_base_is_saved_once(run, frame, tmp_path):
     assert [r["decision"] for r in rows] == ["next", "attack"]  # not again while the gate holds each base
     assert rows[0]["gold"] == "" and rows[1]["gold"] == str(loot.gold)
     assert sorted(p.name for p in scout.glob("*.png")) == sorted(r["file"] for r in rows)
+
+
+def test_each_judged_base_is_detected_once(run, frame, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(main, "detect_buildings", lambda f, model: calls.append(f) or
+                        [main.Building("gold_mine", 0, 0, 10, 10, 0.9)] * 2)
+    skipped = math.ceil(main.SCOUT_UNREADABLE_SECONDS / STEP) + 2
+    run([(faded(frame(SCOUT_AT)), skipped + HOLD), ("cloud", HOLD), (SCOUT_AT, SCOUT + HOLD)])
+
+    assert len(calls) == 2  # the skipped base and the attacked one, not every scout frame
+    assert np.array_equal(calls[1], frame(SCOUT_AT))
+    assert capsys.readouterr().out.count("buildings gold_mine:2") == 2
 
 
 def test_endless_unknown_aborts_without_tapping(run):
