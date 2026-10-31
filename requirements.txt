@@ -2,3 +2,6 @@ adbutils==2.12.0
 numpy==2.5.3
 opencv-contrib-python==5.0.0.93
 pytest==9.1.1
+torch==2.15.0
+torchvision==0.29.2
+ultralytics==8.4.194

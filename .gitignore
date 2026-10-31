@@ -9,6 +9,8 @@ templates/digit_samples
 templates/initial_collection
 templates/unknown
 templates/scout
+datasets
+runs
 .DS_Store
 
 # Byte-compiled / optimized / DLL files
