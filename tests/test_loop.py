@@ -1,6 +1,6 @@
 """main.py end to end, over saved frames, with a fake device that records taps instead of sending them."""
 
-import csv
+import json
 import math
 import sys
 
@@ -174,16 +174,85 @@ def test_panel_that_stays_unreadable_is_skipped(run, frame):
     assert taps == [NEXT]
 
 
-def test_each_judged_base_is_saved_once(run, frame, tmp_path):
+def test_each_judged_base_is_logged_once_and_only_attacked_frames_kept(run, frame, tmp_path):
     skipped = math.ceil(main.SCOUT_UNREADABLE_SECONDS / STEP) + 2
     run([(faded(frame(SCOUT_AT)), skipped + HOLD), ("cloud", HOLD), (SCOUT_AT, SCOUT + HOLD)])
     scout = tmp_path / "scout"
-    rows = list(csv.DictReader((scout / "index.csv").open()))
+    lines = (scout / main.BASES_LOG).read_text().splitlines()
+    records = [json.loads(line) for line in lines]
     loot = main.read_loot(frame(SCOUT_AT), main.load_digit_templates())
 
-    assert [r["decision"] for r in rows] == ["next", "attack"]  # not again while the gate holds each base
-    assert rows[0]["gold"] == "" and rows[1]["gold"] == str(loot.gold)
-    assert sorted(p.name for p in scout.glob("*.png")) == sorted(r["file"] for r in rows)
+    assert [r["decision"] for r in records] == ["next", "attack"]  # not again while the gate holds each base
+    assert str(loot.gold) not in lines[0] and str(loot.gold) in lines[1]
+    assert records[0]["frame"] is None
+    assert [p.name for p in scout.glob("*.png")] == [records[1]["frame"]]
+    assert len({r["id"] for r in records}) == 2
+
+
+def read_log(tmp_path, log):
+    return [json.loads(line) for line in (tmp_path / "scout" / log).read_text().splitlines()]
+
+
+def test_battle_is_logged_against_the_base_it_attacked(run, frame, tmp_path):
+    sequence = [(SCOUT_AT, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 25]
+    code, _ = run(sequence)
+    [base] = read_log(tmp_path, main.BASES_LOG)
+    [battle] = read_log(tmp_path, main.BATTLES_LOG)
+    got = main.read_result(frame(8), main.load_result_templates())
+
+    assert code == 0
+    assert battle["base"] == base["id"] and base["decision"] == "attack"
+    assert battle["got"] == {"gold": got.gold, "elixir": got.elixir, "dark_elixir": got.dark_elixir}
+    assert (tmp_path / "scout" / battle["frame"]).exists()
+    frames = sum(n for _, n in sequence[:3])
+    assert main.RESULT_SETTLE_SECONDS < battle["battle_seconds"] < frames * STEP  # deploy to settled result
+
+
+def battle_showing(battle, scout):
+    """A battle frame with a revamped-UI loot panel: the saved battle frames predate the revamp, so
+    their panel reads unreadable. Assumes the panel sits where it does on the scout screen."""
+
+    image = battle.copy()
+    image[0:320, 0:450] = scout[0:320, 0:450]
+    return image
+
+
+def test_battle_loot_is_traced_on_each_change(run, frame, tmp_path):
+    before, after = battle_showing(frame(7), frame(SCOUT_AT)), battle_showing(frame(7), frame(26))
+    run([(SCOUT_AT, SCOUT), (before, HOLD), (after, HOLD), (frame(7), 2), (8, SETTLE + 2), ("cloud", HOLD), 25])
+    [battle] = read_log(tmp_path, main.BATTLES_LOG)
+    digits = main.load_digit_templates()
+    left = [main.read_loot(f, digits) for f in (frame(SCOUT_AT), frame(26))]
+
+    # One entry per change: repeats and the unreadable frames (7 as saved) add nothing.
+    assert [t[1:] for t in battle["loot_trace"]] == [[r.gold, r.elixir, r.dark_elixir] for r in left]
+    assert battle["loot_trace"][0][0] < battle["loot_trace"][1][0]  # seconds since deploy
+
+
+def test_result_without_a_deploy_is_logged_with_no_base(run, tmp_path):
+    code, _ = run([(8, SETTLE + 2), ("cloud", HOLD), 25])  # started mid-battle
+    [battle] = read_log(tmp_path, main.BATTLES_LOG)
+    assert code == 0
+    assert battle["base"] is None and battle["battle_seconds"] is None
+
+
+def test_result_shown_again_after_return_home_is_counted_once(run, tmp_path, monkeypatch, capsys):
+    # Live, the result screen came back through the clouds after Return Home was tapped.
+    monkeypatch.setattr(main, "ITERATIONS", 2)
+    _, taps = run([(SCOUT_AT, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD), (8, SETTLE + 2)])
+    out = capsys.readouterr().out
+
+    assert len(read_log(tmp_path, main.BATTLES_LOG)) == 1
+    assert "battle 1 got" in out and "battle 2" not in out
+    assert taps.count(RETURN_HOME) == 2  # still leaves the screen it came back to
+
+
+def test_next_battle_after_going_home_is_counted(run, frame, monkeypatch, capsys):
+    monkeypatch.setattr(main, "ITERATIONS", 2)
+    battle = [(SCOUT_AT, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD)]
+    code, _ = run([*battle, (25, HOLD), (2, HOLD), (3, HOLD), ("cloud", HOLD), *battle, 25])
+    assert code == 0
+    assert "battle 2 got" in capsys.readouterr().out
 
 
 def test_each_judged_base_is_detected_once(run, frame, monkeypatch, capsys):
