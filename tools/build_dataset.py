@@ -1,4 +1,4 @@
-"""Turn a Roboflow YOLO export into a training set on the bot's own PNGs.
+"""Turn Roboflow YOLO exports into one training set on the bot's own PNGs.
 
 Roboflow renames every image `<stem>_png.rf.<hash>.jpg` and re-encodes it to JPEG. The labels
 are normalized, so they pair with the original 1920x1080 PNG in templates/scout unchanged, and
@@ -6,14 +6,15 @@ training sees the pixels the bot will see live.
 
   - <out>/{train,valid,test}/images/<stem>.png  hard links to templates/scout
   - <out>/{train,valid,test}/labels/<stem>.txt  copied from the export
-  - <out>/data.yaml                             the export's class order, paths into <out>
+  - <out>/data.yaml                             the exports' class order, paths into <out>
 
-It also relinks datasets/scout: batch1 = every labeled frame, pool = every other frame not in
+Several exports merge split by split; they must share a class order and no frame. It also relinks datasets/scout: batch1 = every labeled frame, pool = every other frame not in
 excluded.csv. Both folders hold only hard links, so emptying them loses nothing.
 
 Typical use:
 
-  python -m tools.build_dataset datasets/coc-buildings-v1 datasets/buildings_v1
+  python -m tools.build_dataset datasets/buildings_v1 datasets/coc-buildings-v1
+  python -m tools.build_dataset datasets/buildings_v2 datasets/coc-buildings-v1 datasets/coc-buildings-v2
 """
 
 import argparse
@@ -44,25 +45,31 @@ def read_names(data_yaml: Path) -> list[str]:
     raise ValueError(f"no names in {data_yaml}")
 
 
-def build(export: Path, out: Path) -> dict[str, list[str]]:
+def build(exports: list[Path], out: Path) -> dict[str, list[str]]:
     if out.exists():
         sys.exit(f"{out} exists; remove it first")
+    names = read_names(exports[0] / "data.yaml")
+    for export in exports[1:]:
+        if read_names(export / "data.yaml") != names:
+            sys.exit(f"{export}: class order differs from {exports[0]}")
     stems: dict[str, list[str]] = {}
     for split in SPLITS:
         (out / split / "images").mkdir(parents=True)
         (out / split / "labels").mkdir(parents=True)
         stems[split] = []
-        for label in sorted((export / split / "labels").glob("*.txt")):
+        labels = [label for export in exports for label in sorted((export / split / "labels").glob("*.txt"))]
+        for label in labels:
             stem = original_stem(label.stem)
             png = SCOUT_DIR / f"{stem}.png"
             frame = cv2.imread(str(png))
             if frame is None or frame.shape[:2] != FRAME_SIZE:
                 sys.exit(f"{label.name}: no 1920x1080 original at {png}")
+            if any(stem in s for s in stems.values()):
+                sys.exit(f"{stem} is in more than one export")
             (out / split / "images" / png.name).hardlink_to(png)
             shutil.copyfile(label, out / split / "labels" / f"{stem}.txt")
             stems[split].append(stem)
 
-    names = read_names(export / "data.yaml")
     (out / "data.yaml").write_text(
         f"path: {out.resolve()}\n"
         "train: train/images\nval: valid/images\ntest: test/images\n\n"
@@ -95,11 +102,11 @@ def relink_scout(labeled: set[str]) -> tuple[int, int]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("export", type=Path, help="unzipped Roboflow YOLO export")
     parser.add_argument("out", type=Path, help="training set to create")
+    parser.add_argument("exports", type=Path, nargs="+", help="unzipped Roboflow YOLO exports")
     args = parser.parse_args()
 
-    stems = build(args.export, args.out)
+    stems = build(args.exports, args.out)
     for split in SPLITS:
         print(f"{split}: {len(stems[split])}")
     labeled = {s for split in SPLITS for s in stems[split]}
