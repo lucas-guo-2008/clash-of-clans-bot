@@ -41,6 +41,7 @@ class OutOfFrames(Exception):
 def run(frame, unknown_frame, monkeypatch, tmp_path):
     monkeypatch.setattr(main, "load_detector", lambda: None)
     monkeypatch.setattr(main, "detect_buildings", lambda frame, model: [])
+    monkeypatch.setattr(main, "save_unknown", lambda _: main.ROOT / "not-saved-in-tests.png")
 
     def play(sequence):
         cache = {}
@@ -67,7 +68,6 @@ def run(frame, unknown_frame, monkeypatch, tmp_path):
         monkeypatch.setattr(main, "connect", lambda: device)
         monkeypatch.setattr(main, "grab_frame", grab)
         monkeypatch.setattr(main, "clock", lambda: count[0] * STEP)
-        monkeypatch.setattr(main, "save_unknown", lambda _: main.ROOT / "not-saved-in-tests.png")
         monkeypatch.setattr(main, "SCOUT_DIR", tmp_path / "scout")
         monkeypatch.setattr(sys, "argv", ["main.py"])
         try:
@@ -196,6 +196,25 @@ def test_each_judged_base_is_detected_once(run, frame, monkeypatch, capsys):
     assert len(calls) == 2  # the skipped base and the attacked one, not every scout frame
     assert np.array_equal(calls[1], frame(SCOUT_AT))
     assert capsys.readouterr().out.count("buildings gold_mine:2") == 2
+
+
+@pytest.fixture
+def saved_unknowns(monkeypatch):
+    saved = []
+    monkeypatch.setattr(main, "save_unknown", lambda f: saved.append(f) or main.ROOT / "not-saved-in-tests.png")
+    return saved
+
+
+def test_clouds_that_clear_are_not_saved(run, saved_unknowns):
+    cloud = int(main.UNKNOWN_SAVE_SECONDS / STEP)  # the last of these is just under the limit
+    run([25, ("cloud", cloud), (2, HOLD), ("cloud", cloud), (2, HOLD)])
+    assert saved_unknowns == []
+
+
+def test_unknown_that_lasts_is_saved_once_then_at_abort(run, saved_unknowns):
+    code, _ = run([("cloud", PATIENCE_FRAMES + 1)])
+    assert code == 1
+    assert len(saved_unknowns) == 2  # once past UNKNOWN_SAVE_SECONDS, once on giving up
 
 
 def test_endless_unknown_aborts_without_tapping(run):

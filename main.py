@@ -40,6 +40,7 @@ ROOT = Path(__file__).resolve().parent
 RESULT_SETTLE_SECONDS = 1.0  # "You got" must read the same for this long before it counts
 SCOUT_SETTLE_SECONDS = 0.6  # a readable loot panel must hold this long before the base is judged
 SCOUT_UNREADABLE_SECONDS = 2.0  # an unreadable panel is skipped only this long after the base appeared
+UNKNOWN_SAVE_SECONDS = 5.0  # an unrecognized stretch is saved only once it outlasts a cloud (live: under 1 s)
 clock = time.monotonic  # every timing reads this, so tests can drive time
 UNKNOWN_DIR = ROOT / "templates" / "unknown"
 SCOUT_DIR = ROOT / "templates" / "scout"
@@ -186,6 +187,7 @@ def main() -> int:
         cv2.resizeWindow(WINDOW, 960, 600)
 
     unknown_since = None
+    unknown_saved = False  # this unrecognized stretch already has a frame in UNKNOWN_DIR
     battles = 0
     pending, pending_since = None, 0.0
     settled = None  # this result screen's reading, once it held for RESULT_SETTLE_SECONDS
@@ -212,11 +214,10 @@ def main() -> int:
         last_screen = screen
 
         now = clock()
-        new_unknown = screen is Screen.UNKNOWN and unknown_since is None
         if screen is Screen.UNKNOWN:
             unknown_since = now if unknown_since is None else unknown_since
         else:
-            unknown_since = None
+            unknown_since, unknown_saved = None, False
         unknown_seconds = now - unknown_since if unknown_since is not None else 0.0
 
         result = None
@@ -283,9 +284,12 @@ def main() -> int:
             print(f"        battle {battles} got {got}")
             print(f"        {run_summary(looted, searches, (clock() - started) / 60)}")
 
-        # One frame per unrecognized stretch, plus the one it gives up on (usually a popup).
-        if new_unknown or action.kind == ABORT:
+        # One frame per unrecognized stretch that outlasts a cloud, plus the one it gives up on
+        # (usually a popup). Clouds between screens clear on their own and are not worth keeping.
+        outlasted = unknown_seconds >= UNKNOWN_SAVE_SECONDS and not unknown_saved
+        if outlasted or action.kind == ABORT:
             print(f"        saved {save_unknown(frame).relative_to(ROOT)}")
+            unknown_saved = True
 
         slots, points = [], []
         if screen is Screen.SCOUT and (args.show or action.kind == DEPLOY):
