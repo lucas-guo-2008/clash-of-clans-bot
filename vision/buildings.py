@@ -25,10 +25,10 @@ class Building:
     conf: float
 
 
-def load_detector(path: Path = MODEL_PATH) -> YOLO:
-    if not path.exists():
-        raise FileNotFoundError(f"no detector weights at {path}; train them with tools/train.py")
-    model = YOLO(path)
+def load_detector() -> YOLO:
+    if not MODEL_PATH.exists():
+        raise FileNotFoundError(f"no detector weights at {MODEL_PATH}; train them with tools/train.py")
+    model = YOLO(MODEL_PATH)
     detect_buildings(np.zeros((*FRAME_SIZE, 3), np.uint8), model)
     return model
 

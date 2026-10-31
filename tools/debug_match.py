@@ -5,18 +5,12 @@
 Press 'q' or ESC to quit, as always
 """
 
-import sys
-from pathlib import Path
-
 import cv2
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-
-from capture.adb import connect, grab_frame  # noqa: E402
-from vision.anchors import THRESHOLD, find_anchors  # noqa: E402
-from vision.buttons import load_button_templates  # noqa: E402
-from vision.overlay import draw_anchors  # noqa: E402
+from capture.adb import connect, grab_frame
+from vision.anchors import THRESHOLD, peak_scores
+from vision.buttons import load_button_templates
+from vision.overlay import draw_anchors
 
 
 def main() -> None:
@@ -31,7 +25,7 @@ def main() -> None:
         frame = grab_frame(device)
         overlay = frame.copy()
 
-        draw_anchors(overlay, find_anchors(frame, templates), THRESHOLD)
+        draw_anchors(overlay, peak_scores(frame, templates), THRESHOLD)
 
         cv2.imshow("anchors", overlay)
         if cv2.waitKey(1) & 0xFF in (ord("q"), 27):

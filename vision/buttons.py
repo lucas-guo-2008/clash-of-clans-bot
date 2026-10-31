@@ -18,7 +18,6 @@ BUTTON_AT = {
     "surrender": (50, 788),
     "return-home": (895, 895),
 }
-BUTTONS = tuple(BUTTON_AT)
 SEARCH_MARGIN = 40
 
 

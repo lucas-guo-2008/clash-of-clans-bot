@@ -33,14 +33,14 @@ class Template:
     """An anchor image, and the part of the frame it can appear in."""
 
     image: np.ndarray
-    region: tuple[int, int, int, int] | None = None  # (x0, y0, x1, y1); None searches the whole frame
+    region: tuple[int, int, int, int]  # (x0, y0, x1, y1)
 
 
 def peak_scores(frame: np.ndarray, templates: dict[str, Template]) -> dict[str, Match]:
     peaks = {}
     for label, template in templates.items():
         h, w = template.image.shape[:2]
-        x0, y0, x1, y1 = template.region or (0, 0, frame.shape[1], frame.shape[0])
+        x0, y0, x1, y1 = template.region
         area = frame[y0:y1, x0:x1]
         if area.shape[0] < h or area.shape[1] < w:
             peaks[label] = Match(label, x0, y0, w, h, 0.0)
@@ -50,9 +50,3 @@ def peak_scores(frame: np.ndarray, templates: dict[str, Template]) -> dict[str, 
         peaks[label] = Match(label, x0 + int(x), y0 + int(y), w, h, float(score))
 
     return peaks
-
-
-def find_anchors(frame: np.ndarray, templates: dict[str, Template]) -> dict[str, Match]:
-    """Find every template that appears in the frame, one match per label."""
-
-    return {label: match for label, match in peak_scores(frame, templates).items() if match.score >= THRESHOLD}

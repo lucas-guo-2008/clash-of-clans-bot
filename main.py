@@ -53,7 +53,6 @@ ITERATIONS = 1
 #   spell: located but not cast -- aiming waits for building detection (Phase 4/5)
 DECK = (("troop", 24), ("skip", 0), ("hero", 1), ("hero", 1), ("spell", 11))
 HERO_ABILITY_DELAY = 10.0
-SEARCH_COST = 900
 
 
 def describe(matches) -> str:
