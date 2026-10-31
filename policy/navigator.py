@@ -1,4 +1,4 @@
-"""Hmmm...what to do? Uses the current screen from vision."""
+"""What to do next, given the screen vision named."""
 
 from dataclasses import dataclass
 
@@ -25,7 +25,7 @@ class Action:
 
 
 def decide(screen: Screen, reading: LootReading | None, unknown_seconds: float) -> Action:
-    """Making bad decisions. Given a screen, the loot showing on it, and how long we have
+    """Given a screen, the loot showing on it, and how long we have
     been lost, return an action."""
 
     if screen is Screen.HOME:

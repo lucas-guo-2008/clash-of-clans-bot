@@ -14,7 +14,7 @@ from vision.anchors import Match
 
 FRAME_SIZE = (1080, 1920)  # (h, w)
 
-# The outline is a 2 px alpha-blended red line; thinner than kernal drops red decor
+# The outline is a 2 px alpha-blended red line; thinner than kernel drops red decor
 RIDGE_KERNEL = 9
 RIDGE_MIN = 40
 

@@ -9,7 +9,6 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-# Can edit (conf threshold)
 THRESHOLD = 0.8
 
 

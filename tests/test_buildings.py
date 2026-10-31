@@ -67,6 +67,7 @@ def test_doubled_singleton_keeps_only_the_most_confident():
     assert [(b.name, b.conf) for b in found] == [("clan_castle", 0.9), ("gold_mine", 0.8), ("gold_mine", 0.7)]
 
 
-def test_resized_frame_is_refused(frame, detector):
+def test_resized_frame_is_refused():
+    model = FakeDetector([(0, 0.9, (0, 0, 9, 9))])
     with pytest.raises(ValueError):
-        detect_buildings(cv2.resize(frame(24), (960, 540)), detector)
+        detect_buildings(np.zeros((540, 960, 3), np.uint8), model)

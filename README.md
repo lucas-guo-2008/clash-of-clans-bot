@@ -34,8 +34,8 @@ adb connect 127.0.0.1:5555
   `troop` (tap the card, then `count` drops), `hero` (one drop; ability fires
   `HERO_ABILITY_DELAY` s later), `spell` (located, not cast yet), `skip`. If the deck on screen
   has a different number of cards, the bot stops rather than guess.
-- **`ITERATIONS`** in `main.py` — battles per run (default 1). Troops are not retrained between
-  battles.
+- **`ITERATIONS`** in `main.py` — battles per run (default 1). The army refills on its own back home;
+  more than one battle is untested live.
 - **Loot thresholds** in `policy/thresholds.py` — gold, elixir and dark elixir must all clear
   them (default 400k / 400k / 2k).
 
@@ -50,9 +50,11 @@ qualifies.
 .venv/bin/python main.py                    # run, console only
 ```
 
-The console prints each change of screen or action, the loot read on each base, and what each
-battle won. `--show` adds every template score, the deploy outline and drop points, the card
-slots, and a crosshair on the next tap. Stop with Ctrl-C, or `q` in the window.
+`main.py` loads the building detector `models/buildings_v2.pt` (in git) at start-up and stops if
+it is missing. The console prints each change of screen or action, the loot read and buildings
+detected on each base, and what each battle won. `--show` adds every template score, the
+building boxes, the deploy outline and drop points, the card slots, and a crosshair on the next
+tap. Stop with Ctrl-C, or `q` in the window.
 
 ## Test
 
@@ -69,10 +71,13 @@ are local data (not in git), so on a fresh clone the frame-based tests skip.
 ```
 main.py     the loop and its configuration
 capture/    screen capture over ADB
-vision/     pure image analysis: buttons, screens, loot, deploy zone, deck, overlay
+vision/     pure image analysis: buttons, screens, loot, deploy zone, deck, buildings, overlay
 policy/     pure decisions: what to do on each screen, attack thresholds
 control/    taps
-tools/      scripts a human runs (frame recorder, template cutter, offline overlays) — see --help
+tools/      scripts a human runs (frame recorder, template cutter, offline overlays, YOLO dataset,
+            training, evaluation and pre-labeling) — see --help
 tests/      pytest suite
 templates/  button and digit templates
+models/     the building detector (YOLO weights)
+datasets/   YOLO training sets (local data, not in git)
 ```
