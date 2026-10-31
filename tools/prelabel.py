@@ -12,7 +12,7 @@ the most confident Town Hall, Clan Castle and Dark Elixir Storage.
 
 Typical use:
 
-  python -m tools.prelabel models/buildings_v1.pt datasets/scout/pool datasets/prelabel_v1
+  python -m tools.prelabel models/buildings_v2.pt datasets/scout/pool datasets/prelabel_v2
 """
 
 import argparse
@@ -36,7 +36,7 @@ def label_lines(buildings: list[Building], names: dict[int, str]) -> list[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("model", type=Path, help="weights, e.g. models/buildings_v1.pt")
+    parser.add_argument("model", type=Path, help="weights, e.g. models/buildings_v2.pt")
     parser.add_argument("frames", type=Path, help="folder of PNG frames")
     parser.add_argument("out", type=Path, help="folder to create")
     args = parser.parse_args()

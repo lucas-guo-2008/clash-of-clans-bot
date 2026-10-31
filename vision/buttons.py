@@ -10,7 +10,7 @@ BUTTONS_DIR = Path(__file__).resolve().parent.parent / "templates" / "buttons"
 FRAME_W, FRAME_H = 1920, 1080
 
 BUTTON_AT = {
-    "battle": (66, 1011),  # "Battle" lettering only (home UI revamp, frame 25); the old "Attack!" crop is in legacy/
+    "battle": (66, 1011),  # "Battle" lettering only (home UI revamp, frame 25)
     "attack-button": (1516, 926),
     "find-match": (112, 734),
     "next-button": (1599, 703),

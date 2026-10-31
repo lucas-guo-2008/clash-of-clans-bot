@@ -12,7 +12,7 @@ Three views, all written under runs/eval/<model>_<split>/:
 
 Typical use:
 
-  python -m tools.evaluate models/buildings_v1.pt datasets/buildings_v1 test
+  python -m tools.evaluate models/buildings_v2.pt datasets/buildings_v2 test
 """
 
 import argparse
@@ -75,7 +75,7 @@ def count_view(model: YOLO, dataset: Path, split: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("model", type=Path, help="weights, e.g. models/buildings_v1.pt")
+    parser.add_argument("model", type=Path, help="weights, e.g. models/buildings_v2.pt")
     parser.add_argument("dataset", type=Path, help="folder holding data.yaml")
     parser.add_argument("split", choices=("train", "valid", "test"))
     args = parser.parse_args()

@@ -6,7 +6,7 @@ mAP on valid -- to models/buildings_<name>.pt.
 
 Typical use:
 
-  python -m tools.train datasets/buildings_v1 v1
+  python -m tools.train datasets/buildings_v2 v2
 """
 
 import argparse
@@ -33,7 +33,7 @@ TRAIN_ARGS: dict = {
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("dataset", type=Path, help="folder holding data.yaml")
-    parser.add_argument("name", help="run name, e.g. v1")
+    parser.add_argument("name", help="run name, e.g. v2")
     args = parser.parse_args()
 
     target = MODELS_DIR / f"buildings_{args.name}.pt"

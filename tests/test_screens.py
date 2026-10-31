@@ -12,7 +12,7 @@ SCREENS = {
     9: "battle",  # the scout timer ran out with no troop down: End Battle, no Next
     **{n: "scout" for n in range(10, 18)},
     **{n: "result" for n in range(18, 23)},
-    1: "unknown", 23: "unknown",  # pre-revamp home (Attack!); its template is in templates/buttons/legacy/
+    1: "unknown", 23: "unknown",  # pre-revamp home (Attack!), no longer matched
     25: "home",  # revamped home: "Battle" lettering, same spot; the screens after it are unchanged
 }
 
