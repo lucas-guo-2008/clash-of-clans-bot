@@ -187,8 +187,7 @@ def test_each_judged_base_is_logged_once_and_only_attacked_frames_kept(run, fram
 
     assert [r["decision"] for r in records] == ["next", "attack"]  # not again while the gate holds each base
     assert str(loot.gold) not in lines[0] and str(loot.gold) in lines[1]
-    assert records[0]["frame"] is None
-    assert [p.name for p in scout.glob("*.png")] == [records[1]["frame"]]
+    assert sorted(p.name for p in scout.glob("*.png")) == sorted(r["frame"] for r in records)  # skipped ones too
     assert len({r["id"] for r in records}) == 2
 
 
@@ -336,3 +335,33 @@ def test_battle_still_paying_is_not_ended(run, frame):
     code, taps = run([(SCOUT_AT, SCOUT), (38, STALL - 10), (paying, STALL - 10), (40, SETTLE + 2), ("cloud", HOLD), 25])
     assert code == 0
     assert END_BATTLE not in taps
+
+
+def test_run_settings_are_logged_once_and_every_record_points_at_them(run, tmp_path):
+    run([(SCOUT_AT, SCOUT), (38, HOLD), (40, SETTLE + 2), ("cloud", HOLD), 25])
+    [run_record] = read_log(tmp_path, main.RUNS_LOG)
+    [base] = read_log(tmp_path, main.BASES_LOG)
+    [battle] = read_log(tmp_path, main.BATTLES_LOG)
+
+    assert base["run"] == battle["run"] == run_record["id"]
+    assert run_record["stall_seconds"] == STALL_SECONDS and run_record["deck"] == [list(s) for s in main.DECK]
+    assert len(run_record["commit"]) == 40
+
+
+def test_search_time_runs_from_the_search_tap_to_the_judged_base(run, tmp_path):
+    run([(3, HOLD), ("cloud", 10), (SCOUT_AT, SCOUT)])
+    [base] = read_log(tmp_path, main.BASES_LOG)
+    assert (10 + SCOUT - 1) * STEP <= base["search_seconds"] <= (HOLD + 10 + SCOUT) * STEP
+
+
+def test_battle_frames_are_kept_every_few_seconds_and_at_the_end(run, tmp_path):
+    every = round(main.BATTLE_FRAME_SECONDS / STEP)
+    run([(SCOUT_AT, SCOUT), (38, 2 * every + 1), (40, SETTLE + 2), ("cloud", HOLD), 25])
+    [battle] = read_log(tmp_path, main.BATTLES_LOG)
+    times = [t for t, _ in battle["battle_frames"]]
+
+    # On a grid from the deploy: the first battle frame, then the first frame past each 5 s mark.
+    assert [k * main.BATTLE_FRAME_SECONDS <= t < k * main.BATTLE_FRAME_SECONDS + 1 for k, t in enumerate(times)] == [True] * 3
+    files = [f for _, f in battle["battle_frames"]] + [battle["final_battle_frame"]]
+    assert all((tmp_path / "scout" / f).exists() for f in files)
+    assert battle["final_battle_frame"].startswith(f"battle_{battle['base']}_")

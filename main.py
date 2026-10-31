@@ -8,13 +8,15 @@ drop the army around it -> wait out the battle -> Return Home, ITERATIONS times.
 
 Stops back home after ITERATIONS battles. Prints the buildings detected on each judged base
 (nothing decides on them yet) and logs every judged base to templates/scout/bases.jsonl, with
-the frame for attacked ones. After each battle it prints what "You got" showed and a running
-summary of the run, and logs the result to templates/scout/battles.jsonl, pointing at its base.
+its frame. After each battle it prints what "You got" showed and a running summary of the run,
+and logs the result to templates/scout/battles.jsonl, pointing at its base, with a battle frame
+every few seconds. templates/scout/runs.jsonl holds each run's commit and settings.
 """
 
 import argparse
 import itertools
 import json
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -26,8 +28,9 @@ import cv2
 
 from capture.adb import connect, grab_frame
 from control.tap import tap_match, tap_point
-from policy.navigator import (ABORT, DEPLOY, GATE_TIMEOUT, PATIENCE_SECONDS, TAP, WAIT, Action, battle_stalled, decide,
-                              gate_open)
+from policy import thresholds
+from policy.navigator import (ABORT, DEPLOY, GATE_TIMEOUT, PATIENCE_SECONDS, STALL_SECONDS, TAP, WAIT, Action,
+                              battle_stalled, decide, gate_open)
 from vision.anchors import THRESHOLD, Match, peak_scores
 from vision.buildings import MODEL_PATH, Building, detect_buildings, load_detector
 from vision.buttons import load_button_templates
@@ -49,9 +52,11 @@ UNKNOWN_DIR = ROOT / "templates" / "unknown"
 SCOUT_DIR = ROOT / "templates" / "scout"
 BASES_LOG = "bases.jsonl"  # in SCOUT_DIR: one JSON record per judged base
 BATTLES_LOG = "battles.jsonl"  # in SCOUT_DIR: one per settled result, pointing at its base
+RUNS_LOG = "runs.jsonl"  # in SCOUT_DIR: one per start, the code and settings every record of that run came from
+BATTLE_FRAME_SECONDS = 5.0  # a battle frame is kept this often from the deploy (training data for what got destroyed)
 WINDOW = "bot"
 
-ITERATIONS = 1
+ITERATIONS = 10
 # The army, slot by slot left to right, as (kind, count). Slots are found on screen; only
 # what is in them is declared here, so reordering the army means editing this line.
 #   troop: tap the card, then `count` drops cycling the deploy points
@@ -122,15 +127,54 @@ def append_record(log: str, record: dict) -> None:
         f.write(json.dumps(record) + "\n")
 
 
-def base_record(stamp: str, reading: LootReading, decision: str, buildings: list[Building],
-                points: list[DeployPoint], frame_file: str | None) -> dict:
+def save_png(frame, name: str) -> str:
+    """Keep a frame in SCOUT_DIR, lossless: models train on what the bot sees live."""
+
+    SCOUT_DIR.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(SCOUT_DIR / name), frame, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+    return name
+
+
+def git(*args: str) -> str | None:
+    try:
+        return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def save_run() -> str:
+    """Log this run's code and settings to runs.jsonl and return its id; every base and battle
+    record carries it, so data from different rules or decks can be told apart later."""
+
+    stamp = f"{datetime.now():%Y%m%d_%H%M%S_%f}"
+    status = git("status", "--porcelain", "--untracked-files=no")
+    append_record(RUNS_LOG, {
+        "id": stamp,
+        "commit": git("rev-parse", "HEAD"),
+        "dirty": None if status is None else bool(status),  # local settings, e.g. data-run thresholds
+        "detector": MODEL_PATH.name,
+        "thresholds": {"gold": thresholds.MIN_GOLD, "elixir": thresholds.MIN_ELIXIR, "dark_elixir": thresholds.MIN_DARK},
+        "deck": DECK,
+        "iterations": ITERATIONS,
+        "hero_ability_delay": HERO_ABILITY_DELAY,
+        "stall_seconds": STALL_SECONDS,
+        "battle_frame_seconds": BATTLE_FRAME_SECONDS,
+    })
+    return stamp
+
+
+def base_record(stamp: str, run_id: str, reading: LootReading, decision: str, buildings: list[Building],
+                points: list[DeployPoint], frame_file: str, search_seconds: float | None) -> dict:
     """One judged base as Phase 5 will read it back: enough to compute features for a base whose
     frame was not kept. A battle record points back at it by `id`."""
 
     return {
         "id": stamp,
+        "run": run_id,
         "decision": decision,
         "frame": frame_file,
+        # From the Attack / Next tap to this base being judged: clouds, panel settling, all of it.
+        "search_seconds": None if search_seconds is None else round(search_seconds, 1),
         **loot_fields(reading, "loot"),
         # Detections depend on the model: a retrained one would count differently.
         "detector": MODEL_PATH.name,
@@ -139,41 +183,40 @@ def base_record(stamp: str, reading: LootReading, decision: str, buildings: list
     }
 
 
-def save_base(frame, reading: LootReading, decision: str, buildings: list[Building],
-              points: list[DeployPoint]) -> str:
-    """Log a judged base to bases.jsonl and return its id. The frame is kept only for a base that
-    is attacked: those are the ones a battle result labels. (index.csv is the frozen Phase 4 log.)"""
+def save_base(frame, run_id: str, reading: LootReading, decision: str, buildings: list[Building],
+              points: list[DeployPoint], search_seconds: float | None) -> str:
+    """Log a judged base to bases.jsonl with its frame, and return its id. Skipped bases keep their
+    frame too: unlabeled detector data. (index.csv is the frozen Phase 4 log.)"""
 
-    SCOUT_DIR.mkdir(parents=True, exist_ok=True)
     stamp = f"{datetime.now():%Y%m%d_%H%M%S_%f}"
-    frame_file = None
-    if decision == "attack":
-        frame_file = f"scout_{stamp}.png"
-        cv2.imwrite(str(SCOUT_DIR / frame_file), frame, [cv2.IMWRITE_PNG_COMPRESSION, 1])
-    append_record(BASES_LOG, base_record(stamp, reading, decision, buildings, points, frame_file))
+    frame_file = save_png(frame, f"scout_{stamp}.png")
+    append_record(BASES_LOG, base_record(stamp, run_id, reading, decision, buildings, points, frame_file, search_seconds))
     return stamp
 
 
-def save_battle(frame, result: LootReading, base_id: str | None, battle_seconds: float | None,
-                trace: list[list], ended_early: bool) -> None:
+def save_battle(frame, run_id: str, result: LootReading, base_id: str | None, battle_seconds: float | None,
+                trace: list[list], ended_early: bool, battle_frames: list[list], final_frame: str | None) -> None:
     """Log a settled result to battles.jsonl with its frame, so a misread "You got" can be read
     again. `base` is the attacked base's id in bases.jsonl; None (and no duration) when this run
     did not deploy the army, e.g. it was started mid-battle. `trace` is the battle screen's
     Available Loot each time it changed, as [seconds since deploy, gold, elixir, dark elixir].
-    `ended_early` is True when the bot ended the battle on a loot stall rather than the timer."""
+    `ended_early` is True when the bot ended the battle on a loot stall rather than the timer.
+    `battle_frames` are [seconds since deploy, file] every BATTLE_FRAME_SECONDS; `final_frame` is
+    the last battle frame before the result: what the army left standing."""
 
     stamp = f"{datetime.now():%Y%m%d_%H%M%S_%f}"
-    frame_file = f"result_{stamp}.png"
-    SCOUT_DIR.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(SCOUT_DIR / frame_file), frame, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+    frame_file = save_png(frame, f"result_{stamp}.png")
     append_record(BATTLES_LOG, {
         "id": stamp,
+        "run": run_id,
         "base": base_id,
         **loot_fields(result, "got"),
         # From the army going down to "You got" settling: includes the count-up and RESULT_SETTLE_SECONDS.
         "battle_seconds": None if battle_seconds is None else round(battle_seconds, 1),
         "loot_trace": trace,
         "ended_early": ended_early,  # a stall the rule misjudged shows as loot cut short here
+        "battle_frames": battle_frames,
+        "final_battle_frame": final_frame,
         "frame": frame_file,
     })
 
@@ -259,6 +302,10 @@ def main() -> int:
     attacked_id, deployed_at = None, None  # the base under attack (bases.jsonl id), and when its army went down
     trace: list[list] = []  # this battle's Available Loot readings, one per change (Phase 5f's stall window)
     ended_early = False  # the bot tapped End Battle / Surrender on this battle
+    battle_frames: list[list] = []  # [seconds since deploy, file] kept every BATTLE_FRAME_SECONDS
+    last_battle = None  # the latest battle frame since the deploy, kept as final_battle_frame with the result
+    searched_at = None  # when Attack (army screen) or Next was last tapped
+    run_id = None if args.dry_run else save_run()
     looted = (0, 0, 0)  # gold, elixir, dark elixir over every readable result
     searches = 0
     started = clock()
@@ -275,6 +322,11 @@ def main() -> int:
 
         # Available Loot counts down as it is taken. Unreadable frames are skipped, not guessed.
         if screen is Screen.BATTLE and deployed_at is not None:
+            last_battle = frame
+            since = clock() - deployed_at
+            if since >= len(battle_frames) * BATTLE_FRAME_SECONDS:
+                tag = attacked_id or f"{datetime.now():%Y%m%d_%H%M%S_%f}"
+                battle_frames.append([round(since, 1), save_png(frame, f"battle_{tag}_{since:05.1f}.png")])
             left = read_loot(frame, digits)
             values = [left.gold, left.elixir, left.dark_elixir]
             if left.ok and (not trace or trace[-1][1:] != values):
@@ -342,7 +394,8 @@ def main() -> int:
         if judged:
             buildings = detect_buildings(frame, detector)
             decision = "attack" if action.kind == DEPLOY else "next"
-            base_id = save_base(frame, scout_settled, decision, buildings, deploy_points(frame))
+            base_id = save_base(frame, run_id, scout_settled, decision, buildings, deploy_points(frame),
+                                None if searched_at is None else now - searched_at)
             if decision == "attack":
                 attacked_id = base_id
             scout_saved = True
@@ -366,9 +419,11 @@ def main() -> int:
             got = f"{result.gold}/{result.elixir}/{result.dark_elixir}" if result.ok else "UNREADABLE (not counted)"
             print(f"        battle {battles} got {got}")
             print(f"        {run_summary(looted, searches, (clock() - started) / 60)}")
-            save_battle(frame, result, attacked_id, None if deployed_at is None else now - deployed_at, trace,
-                        ended_early)
+            final = None if last_battle is None else save_png(last_battle, f"battle_{attacked_id}_final.png")
+            save_battle(frame, run_id, result, attacked_id, None if deployed_at is None else now - deployed_at, trace,
+                        ended_early, battle_frames, final)
             attacked_id, deployed_at, trace, ended_early = None, None, [], False
+            battle_frames, last_battle = [], None
 
         # One frame per unrecognized stretch that outlasts a cloud, plus the one it gives up on
         # (usually a popup). Clouds between screens clear on their own and are not worth keeping.
@@ -408,6 +463,8 @@ def main() -> int:
             tapped_on, tapped_at = screen, clock()
             if action.anchor in ("find-match", "next-button"):
                 searches += 1
+            if action.anchor in ("attack-button", "next-button"):  # the clouds start here
+                searched_at = clock()
             if action.anchor in ("end-battle", "surrender"):
                 ended_early = True
         elif action.kind == DEPLOY:
@@ -418,7 +475,7 @@ def main() -> int:
                       file=sys.stderr)
                 return 1
             else:
-                deployed_at, trace = clock(), []
+                deployed_at, trace, battle_frames, last_battle = clock(), [], [], None
                 heroes = deploy_army(device, slots, points)
                 ability_at = clock() + HERO_ABILITY_DELAY
                 tapped_on, tapped_at = screen, clock()
