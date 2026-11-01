@@ -64,6 +64,8 @@ ITERATIONS = 10
 #   spell: located but not cast -- aiming waits for building detection (Phase 4/5)
 DECK = (("troop", 24), ("skip", 0), ("hero", 1), ("hero", 1), ("spell", 11))
 HERO_ABILITY_DELAY = 10.0
+MIN_DEPLOY_POINTS = 12  # fewer means the outline was not found (not fully drawn yet, or a dark map skin)
+OUTLINE_SECONDS = 5.0  # from the base appearing: keep looking for its outline this long, then skip it
 
 
 def describe(matches) -> str:
@@ -98,7 +100,7 @@ def deploy_army(device, slots: list[Match], points: list[DeployPoint]) -> list[M
         if kind not in ("troop", "hero"):
             continue
         tap_match(device, slot)
-        for _ in range(count):
+        for _ in range(count if kind == "troop" else 1):
             tap_point(device, next(drops))
         if kind == "hero":
             heroes.append(slot)
@@ -186,7 +188,8 @@ def base_record(stamp: str, run_id: str, reading: LootReading, decision: str, bu
 def save_base(frame, run_id: str, reading: LootReading, decision: str, buildings: list[Building],
               points: list[DeployPoint], search_seconds: float | None) -> str:
     """Log a judged base to bases.jsonl with its frame, and return its id. Skipped bases keep their
-    frame too: unlabeled detector data. (index.csv is the frozen Phase 4 log.)"""
+    frame too: unlabeled detector data. `decision` is the loot rule's; an "attack" with no battle
+    pointing at it was skipped for want of a deploy outline. (index.csv is the frozen Phase 4 log.)"""
 
     stamp = f"{datetime.now():%Y%m%d_%H%M%S_%f}"
     frame_file = save_png(frame, f"scout_{stamp}.png")
@@ -195,14 +198,16 @@ def save_base(frame, run_id: str, reading: LootReading, decision: str, buildings
 
 
 def save_battle(frame, run_id: str, result: LootReading, base_id: str | None, battle_seconds: float | None,
-                trace: list[list], ended_early: bool, battle_frames: list[list], final_frame: str | None) -> None:
+                trace: list[list], ended_early: bool, battle_frames: list[list], final_frame: str | None,
+                deployed: list[list]) -> None:
     """Log a settled result to battles.jsonl with its frame, so a misread "You got" can be read
     again. `base` is the attacked base's id in bases.jsonl; None (and no duration) when this run
     did not deploy the army, e.g. it was started mid-battle. `trace` is the battle screen's
     Available Loot each time it changed, as [seconds since deploy, gold, elixir, dark elixir].
     `ended_early` is True when the bot ended the battle on a loot stall rather than the timer.
     `battle_frames` are [seconds since deploy, file] every BATTLE_FRAME_SECONDS; `final_frame` is
-    the last battle frame before the result: what the army left standing."""
+    the last battle frame before the result: what the army left standing. `deployed` is the deploy
+    points the army actually went down on (the base record's are from the frame it was judged on)."""
 
     stamp = f"{datetime.now():%Y%m%d_%H%M%S_%f}"
     frame_file = save_png(frame, f"result_{stamp}.png")
@@ -215,6 +220,7 @@ def save_battle(frame, run_id: str, result: LootReading, base_id: str | None, ba
         "battle_seconds": None if battle_seconds is None else round(battle_seconds, 1),
         "loot_trace": trace,
         "ended_early": ended_early,  # a stall the rule misjudged shows as loot cut short here
+        "deploy_points": deployed,
         "battle_frames": battle_frames,
         "final_battle_frame": final_frame,
         "frame": frame_file,
@@ -300,6 +306,8 @@ def main() -> int:
     heroes: list[Match] = []  # deployed hero cards whose ability has not been used yet
     ability_at = 0.0
     attacked_id, deployed_at = None, None  # the base under attack (bases.jsonl id), and when its army went down
+    base_id = None  # the base on screen, once judged; it becomes attacked_id only when the army goes down
+    deployed = []  # the deploy points the army went down on
     trace: list[list] = []  # this battle's Available Loot readings, one per change (Phase 5f's stall window)
     ended_early = False  # the bot tapped End Battle / Surrender on this battle
     battle_frames: list[list] = []  # [seconds since deploy, file] kept every BATTLE_FRAME_SECONDS
@@ -322,12 +330,13 @@ def main() -> int:
 
         # Available Loot counts down as it is taken. Unreadable frames are skipped, not guessed.
         if screen is Screen.BATTLE and deployed_at is not None:
-            last_battle = frame
             since = clock() - deployed_at
             if since >= len(battle_frames) * BATTLE_FRAME_SECONDS:
                 tag = attacked_id or f"{datetime.now():%Y%m%d_%H%M%S_%f}"
                 battle_frames.append([round(since, 1), save_png(frame, f"battle_{tag}_{since:05.1f}.png")])
             left = read_loot(frame, digits)
+            if left.ok:  # the end-of-battle banner dims the panel; the frame before it shows what was left standing
+                last_battle = frame
             values = [left.gold, left.elixir, left.dark_elixir]
             if left.ok and (not trace or trace[-1][1:] != values):
                 trace.append([round(clock() - deployed_at, 1), *values])
@@ -396,8 +405,6 @@ def main() -> int:
             decision = "attack" if action.kind == DEPLOY else "next"
             base_id = save_base(frame, run_id, scout_settled, decision, buildings, deploy_points(frame),
                                 None if searched_at is None else now - searched_at)
-            if decision == "attack":
-                attacked_id = base_id
             scout_saved = True
 
         if tapped_on is not None and gate_open(screen, tapped_on, now - tapped_at, frames_on_screen):
@@ -405,6 +412,17 @@ def main() -> int:
         if tapped_on is not None and action.kind in (TAP, DEPLOY):
             waited = f"{now - tapped_at:.1f}/{GATE_TIMEOUT:.0f} s"
             action = Action(WAIT, why=f"holding until the screen changes after the last tap ({waited})")
+
+        slots, points = [], []
+        if screen is Screen.SCOUT and (args.show or action.kind == DEPLOY):
+            slots, points = deck_slots(frame), deploy_points(frame)
+        # The outline is not always fully drawn, and on a dark map skin not found at all. Drops inside the red
+        # zone are refused, so wait for a better frame rather than guess, then give up on the base.
+        if action.kind == DEPLOY and len(points) < MIN_DEPLOY_POINTS:
+            if now - scout_seen < OUTLINE_SECONDS:
+                action = Action(WAIT, why=f"deploy outline not found yet ({len(points)} points)")
+            else:
+                action = Action(TAP, "next-button", f"no deploy outline ({len(points)} points), skip the base")
 
         # Frames come ~5 per second: log when what the bot sees or means to do changes.
         target = f" {action.anchor}" if action.anchor else ""
@@ -421,8 +439,8 @@ def main() -> int:
             print(f"        {run_summary(looted, searches, (clock() - started) / 60)}")
             final = None if last_battle is None else save_png(last_battle, f"battle_{attacked_id}_final.png")
             save_battle(frame, run_id, result, attacked_id, None if deployed_at is None else now - deployed_at, trace,
-                        ended_early, battle_frames, final)
-            attacked_id, deployed_at, trace, ended_early = None, None, [], False
+                        ended_early, battle_frames, final, deployed)
+            attacked_id, deployed_at, trace, ended_early, deployed = None, None, [], False, []
             battle_frames, last_battle = [], None
 
         # One frame per unrecognized stretch that outlasts a cloud, plus the one it gives up on
@@ -432,9 +450,6 @@ def main() -> int:
             print(f"        saved {save_unknown(frame).relative_to(ROOT)}")
             unknown_saved = True
 
-        slots, points = [], []
-        if screen is Screen.SCOUT and (args.show or action.kind == DEPLOY):
-            slots, points = deck_slots(frame), deploy_points(frame)
         if action.kind == DEPLOY:
             print(f"        {len(slots)}/{len(DECK)} deck cards, {len(points)} deploy points")
 
@@ -468,14 +483,13 @@ def main() -> int:
             if action.anchor in ("end-battle", "surrender"):
                 ended_early = True
         elif action.kind == DEPLOY:
-            if not points:
-                print("        no deploy points on this frame, retrying")
-            elif len(slots) != len(DECK):
+            if len(slots) != len(DECK):
                 print(f"\ndeck shows {len(slots)} cards but DECK lists {len(DECK)} -- update DECK in main.py",
                       file=sys.stderr)
                 return 1
             else:
                 deployed_at, trace, battle_frames, last_battle = clock(), [], [], None
+                attacked_id, deployed = base_id, [[p.x, p.y] for p in points]
                 heroes = deploy_army(device, slots, points)
                 ability_at = clock() + HERO_ABILITY_DELAY
                 tapped_on, tapped_at = screen, clock()

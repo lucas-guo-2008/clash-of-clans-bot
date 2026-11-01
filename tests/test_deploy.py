@@ -5,8 +5,8 @@ import pytest
 
 from vision.deploy import MAX_POINTS, UI_RECTS, deck_slots, deploy_points
 
-WITH_OUTLINE = [5, 6, 9, *range(10, 18)]
-NO_OUTLINE = [0, 1, 2, 3, 4, 7, 8]  # 4 is a scout frame with no outline drawn
+WITH_OUTLINE = [5, 6, 9, *range(10, 18), 41, 42]
+NO_OUTLINE = [0, 1, 2, 3, 4, 7, 8, 43]  # 4 and 43 are scout frames with no outline drawn; 43 has red walls
 
 
 @pytest.mark.parametrize("n", WITH_OUTLINE)
@@ -15,6 +15,20 @@ def test_outline_frame_gives_full_set_of_points(frame, n):
     assert len(points) == MAX_POINTS
     for p in points:
         assert not any(x0 <= p.x < x1 and y0 <= p.y < y1 for x0, y0, x1, y1 in UI_RECTS)
+
+
+# Points the old finder put just past a wall, where the outline was hidden under the deck or not
+# drawn; the drops were refused live (41: 4 dragons left on the card, 42: 7).
+REFUSED = {
+    41: [(1141, 756), (1125, 768), (925, 864), (905, 851)],
+    42: [(1317, 714), (1231, 784), (1141, 853), (911, 817)],
+}
+
+
+@pytest.mark.parametrize("n", REFUSED)
+def test_no_point_past_a_wall(frame, n):
+    for p in deploy_points(frame(n)):
+        assert all(abs(p.x - x) + abs(p.y - y) > 60 for x, y in REFUSED[n]), (p.x, p.y)
 
 
 @pytest.mark.parametrize("n", NO_OUTLINE)

@@ -4,6 +4,7 @@ import json
 import math
 import sys
 
+import cv2
 import numpy as np
 import pytest
 
@@ -85,7 +86,7 @@ def expected_deploy(frame):
     taps = []
     for slot, (kind, count) in zip(deck_slots(frame), main.DECK):
         if kind in ("troop", "hero"):
-            taps += [slot.centre] + ["point"] * count
+            taps += [slot.centre] + ["point"] * (count if kind == "troop" else 1)
     return taps
 
 
@@ -365,3 +366,37 @@ def test_battle_frames_are_kept_every_few_seconds_and_at_the_end(run, tmp_path):
     files = [f for _, f in battle["battle_frames"]] + [battle["final_battle_frame"]]
     assert all((tmp_path / "scout" / f).exists() for f in files)
     assert battle["final_battle_frame"].startswith(f"battle_{battle['base']}_")
+
+
+OUTLINE = math.ceil(main.OUTLINE_SECONDS / STEP) + 2  # scout frames until a base with no outline is skipped
+
+
+def test_base_with_no_outline_is_skipped_not_guessed(run, frame, tmp_path):
+    blank = no_outline(frame(SCOUT_AT))
+    code, taps = run([(blank, OUTLINE)])
+    [base] = read_log(tmp_path, main.BASES_LOG)
+    assert taps == [NEXT]  # no card tapped, no drop
+    assert base["decision"] == "attack" and base["deploy_points"] == []  # the loot rule said attack
+
+
+def test_battle_that_never_got_its_army_is_not_linked_to_the_base(run, frame, tmp_path):
+    # The scout timer ran out while the outline was still missing (frame 9: End Battle, no Next).
+    blank = no_outline(frame(SCOUT_AT))
+    run([(blank, SCOUT), (9, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 25])
+    [battle] = read_log(tmp_path, main.BATTLES_LOG)
+    assert battle["base"] is None and battle["deploy_points"] == [] and battle["battle_seconds"] is None
+
+
+def test_battle_logs_the_points_the_army_went_down_on(run, frame, tmp_path):
+    run([(SCOUT_AT, SCOUT), (38, HOLD), (40, SETTLE + 2), ("cloud", HOLD), 25])
+    [battle] = read_log(tmp_path, main.BATTLES_LOG)
+    assert battle["deploy_points"] == [[p.x, p.y] for p in deploy_points(frame(SCOUT_AT))]
+
+
+def test_final_battle_frame_is_the_last_one_whose_loot_reads(run, frame, tmp_path):
+    # The end-of-battle banner dims the battle screen: still a battle, but the panel stops reading.
+    banner = (frame(38) * 0.4).astype(np.uint8)
+    run([(SCOUT_AT, SCOUT), (38, HOLD), (banner, HOLD), (40, SETTLE + 2), ("cloud", HOLD), 25])
+    [battle] = read_log(tmp_path, main.BATTLES_LOG)
+    final = cv2.imread(str(tmp_path / "scout" / battle["final_battle_frame"]))
+    assert np.array_equal(final, frame(38))

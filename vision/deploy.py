@@ -20,6 +20,9 @@ RIDGE_MIN = 40
 
 MIN_SPAN = 150
 
+WALL_HALF = 2.5
+WALL_REACH = 6
+
 CENTRE = (960, 540)
 RAY_STEP_DEG = 2
 STEP_OUT = 45  # past the outermost crossing
@@ -69,6 +72,9 @@ def outline_lines(mask: np.ndarray) -> np.ndarray:
     lines = mask.copy()
     for x0, y0, x1, y1 in UI_RECTS:
         lines[y0:y1, x0:x1] = 0
+    cores = np.where(cv2.distanceTransform(lines, cv2.DIST_L2, 3) >= WALL_HALF, 255, 0).astype(np.uint8)
+    reach = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * WALL_REACH + 1,) * 2)
+    lines[cv2.dilate(cores, reach) > 0] = 0
 
     _, labels, stats, _ = cv2.connectedComponentsWithStats(lines, connectivity=8)
     span = np.maximum(stats[:, cv2.CC_STAT_WIDTH], stats[:, cv2.CC_STAT_HEIGHT])
