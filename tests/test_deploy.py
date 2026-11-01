@@ -3,7 +3,7 @@
 import cv2
 import pytest
 
-from vision.deploy import MAX_POINTS, UI_RECTS, deck_slots, deploy_points
+from vision.deploy import MAX_POINTS, UI_RECTS, card_spent, deck_slots, deploy_points
 
 WITH_OUTLINE = [5, 6, 9, *range(10, 18), 41, 42]
 NO_OUTLINE = [0, 1, 2, 3, 4, 7, 8, 43]  # 4 and 43 are scout frames with no outline drawn; 43 has red walls
@@ -61,3 +61,10 @@ def test_no_deck_gives_no_slots(frame, n):
 def test_resized_frame_is_refused(frame):
     with pytest.raises(ValueError):
         deploy_points(cv2.resize(frame(5), (960, 540)))
+
+@pytest.mark.parametrize("n, spent", [(44, [True, False, False, False, False]),
+                                      (45, [False, False, False, False, False]),
+                                      (41, [False, False, False, False, False])])  # scout: nothing dropped yet
+def test_spent_card_is_greyed(frame, n, spent):
+    f = frame(n)
+    assert [card_spent(f, s) for s in deck_slots(f)] == spent

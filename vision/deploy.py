@@ -53,6 +53,9 @@ SLOT_W = (125, 140)  # 140 rejects a home-screen pair at 143-144 and a stray edg
 DECK_LEFT = (120, 170)  # the first card's left border: 134-148 measured
 SLOT_GAP = 45  # most blank px between neighbouring cards: 13-31 measured
 
+SPENT_SATURATION = 40
+ART_INSET = (10, 30)  # (x, y)
+
 
 @dataclass(frozen=True)
 class DeployPoint:
@@ -151,3 +154,10 @@ def deck_slots(frame: np.ndarray) -> list[Match]:
         slots.append(Match(f"slot{len(slots) + 1}", left, top, right - left, bottom - top, score))
         i = next((k for k, b in enumerate(borders) if b > right), len(borders))
     return slots
+
+
+def card_spent(frame: np.ndarray, slot: Match) -> bool:
+    """Whether a deck card has nothing left to drop: the game greys it out once its last troop lands."""
+    ix, iy = ART_INSET
+    art = frame[slot.y + iy : slot.y + slot.h - iy, slot.x + ix : slot.x + slot.w - ix]
+    return float(cv2.cvtColor(art, cv2.COLOR_BGR2HSV)[..., 1].mean()) < SPENT_SATURATION

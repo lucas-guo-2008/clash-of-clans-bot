@@ -34,7 +34,7 @@ from policy.navigator import (ABORT, DEPLOY, GATE_TIMEOUT, PATIENCE_SECONDS, STA
 from vision.anchors import THRESHOLD, Match, peak_scores
 from vision.buildings import MODEL_PATH, Building, detect_buildings, load_detector
 from vision.buttons import load_button_templates
-from vision.deploy import DeployPoint, deck_slots, deploy_points, outline_lines, outline_mask
+from vision.deploy import DeployPoint, card_spent, deck_slots, deploy_points, outline_lines, outline_mask
 from vision.glyphs import load_digit_templates
 from vision.loot import LootReading, read_loot
 from vision.overlay import (CYAN, GREEN, GREY, RED, WHITE, YELLOW, draw_anchors, draw_buildings, draw_deploy,
@@ -65,7 +65,8 @@ ITERATIONS = 10
 DECK = (("troop", 24), ("skip", 0), ("hero", 1), ("hero", 1), ("spell", 11))
 HERO_ABILITY_DELAY = 10.0
 MIN_DEPLOY_POINTS = 12  # fewer means the outline was not found (not fully drawn yet, or a dark map skin)
-OUTLINE_SECONDS = 5.0  # from the base appearing: keep looking for its outline this long, then skip it
+OUTLINE_SECONDS = 5.0
+CARD_CHECK_SECONDS = 3.0
 
 
 def describe(matches) -> str:
@@ -199,7 +200,7 @@ def save_base(frame, run_id: str, reading: LootReading, decision: str, buildings
 
 def save_battle(frame, run_id: str, result: LootReading, base_id: str | None, battle_seconds: float | None,
                 trace: list[list], ended_early: bool, battle_frames: list[list], final_frame: str | None,
-                deployed: list[list]) -> None:
+                deployed: list[list], redeployed: list[list]) -> None:
     """Log a settled result to battles.jsonl with its frame, so a misread "You got" can be read
     again. `base` is the attacked base's id in bases.jsonl; None (and no duration) when this run
     did not deploy the army, e.g. it was started mid-battle. `trace` is the battle screen's
@@ -207,7 +208,8 @@ def save_battle(frame, run_id: str, result: LootReading, base_id: str | None, ba
     `ended_early` is True when the bot ended the battle on a loot stall rather than the timer.
     `battle_frames` are [seconds since deploy, file] every BATTLE_FRAME_SECONDS; `final_frame` is
     the last battle frame before the result: what the army left standing. `deployed` is the deploy
-    points the army actually went down on (the base record's are from the frame it was judged on)."""
+    points the army actually went down on (the base record's are from the frame it was judged on);
+    `redeployed` is [seconds since deploy, x, y] for each troop dropped again after the game refused it."""
 
     stamp = f"{datetime.now():%Y%m%d_%H%M%S_%f}"
     frame_file = save_png(frame, f"result_{stamp}.png")
@@ -221,6 +223,7 @@ def save_battle(frame, run_id: str, result: LootReading, base_id: str | None, ba
         "loot_trace": trace,
         "ended_early": ended_early,  # a stall the rule misjudged shows as loot cut short here
         "deploy_points": deployed,
+        "redeployed": redeployed,
         "battle_frames": battle_frames,
         "final_battle_frame": final_frame,
         "frame": frame_file,
@@ -304,6 +307,10 @@ def main() -> int:
     scout_saved = False  # this base is logged in BASES_LOG
     buildings = None  # this base's detections, found once when it is judged
     heroes: list[Match] = []  # deployed hero cards whose ability has not been used yet
+    troops: list[Match] = []
+    spare = iter(())
+    check_at = 0.0
+    redeployed: list[list] = []
     ability_at = 0.0
     attacked_id, deployed_at = None, None  # the base under attack (bases.jsonl id), and when its army went down
     base_id = None  # the base on screen, once judged; it becomes attacked_id only when the army goes down
@@ -394,7 +401,7 @@ def main() -> int:
 
         # Phase 5f: once the whole army is down and every ability used, end a battle that stopped paying.
         end_with = None
-        if screen is Screen.BATTLE and deployed_at is not None and not heroes:
+        if screen is Screen.BATTLE and deployed_at is not None and not heroes and not troops:
             if battle_stalled(trace, now - deployed_at):
                 end_with = "end-battle" if "end-battle" in matches else "surrender"  # End Battle once a star is won
 
@@ -439,8 +446,8 @@ def main() -> int:
             print(f"        {run_summary(looted, searches, (clock() - started) / 60)}")
             final = None if last_battle is None else save_png(last_battle, f"battle_{attacked_id}_final.png")
             save_battle(frame, run_id, result, attacked_id, None if deployed_at is None else now - deployed_at, trace,
-                        ended_early, battle_frames, final, deployed)
-            attacked_id, deployed_at, trace, ended_early, deployed = None, None, [], False, []
+                        ended_early, battle_frames, final, deployed, redeployed)
+            attacked_id, deployed_at, trace, ended_early, deployed, redeployed = None, None, [], False, [], []
             battle_frames, last_battle = [], None
 
         # One frame per unrecognized stretch that outlasts a cloud, plus the one it gives up on
@@ -491,7 +498,9 @@ def main() -> int:
                 deployed_at, trace, battle_frames, last_battle = clock(), [], [], None
                 attacked_id, deployed = base_id, [[p.x, p.y] for p in points]
                 heroes = deploy_army(device, slots, points)
-                ability_at = clock() + HERO_ABILITY_DELAY
+                troops = [slot for slot, (kind, _) in zip(slots, DECK) if kind == "troop"]
+                spare = itertools.islice(itertools.cycle(points), len(points) // 2, len(points) // 2 + len(points))
+                ability_at, check_at = clock() + HERO_ABILITY_DELAY, clock() + CARD_CHECK_SECONDS
                 tapped_on, tapped_at = screen, clock()
 
         if screen is Screen.BATTLE and heroes and clock() >= ability_at:
@@ -499,8 +508,19 @@ def main() -> int:
                 tap_match(device, hero)
             print(f"        hero abilities: tapped {len(heroes)} hero card(s)")
             heroes = []
+        if screen is Screen.BATTLE and troops and clock() >= check_at:
+            troops = [slot for slot in troops if not card_spent(frame, slot)]
+            point = next(spare, None) if troops else None
+            if point is None:
+                troops = []
+            else:
+                tap_match(device, troops[0])
+                tap_point(device, point)
+                redeployed.append([round(clock() - deployed_at, 1), point.x, point.y])
+                print(f"        {troops[0].label} not spent: one more drop at ({point.x}, {point.y})")
+                check_at = clock() + CARD_CHECK_SECONDS
         if screen is Screen.RESULT:
-            heroes = []
+            heroes, troops = [], []
 
         if args.show and not window_alive():
             print("\nstopped from the window")

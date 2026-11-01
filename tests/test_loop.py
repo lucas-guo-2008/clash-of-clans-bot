@@ -400,3 +400,26 @@ def test_final_battle_frame_is_the_last_one_whose_loot_reads(run, frame, tmp_pat
     [battle] = read_log(tmp_path, main.BATTLES_LOG)
     final = cv2.imread(str(tmp_path / "scout" / battle["final_battle_frame"]))
     assert np.array_equal(final, frame(38))
+
+
+CHECK = math.ceil(main.CARD_CHECK_SECONDS / STEP) + 2
+
+
+def test_refused_troop_is_dropped_again_until_the_card_is_spent(run, frame, tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 60.0)
+    code, taps = run([(SCOUT_AT, SCOUT), (45, CHECK), (44, 2 * CHECK), (40, SETTLE + 2), ("cloud", HOLD), 25])
+    deploy = expected_deploy(frame(SCOUT_AT))
+    points = deploy_points(frame(SCOUT_AT))
+    dragons = deck_slots(frame(SCOUT_AT))[0].centre
+    opposite = points[len(points) // 2]
+
+    assert code == 0
+    assert taps[len(deploy) :] == [dragons, (opposite.x, opposite.y), RETURN_HOME]
+    [battle] = read_log(tmp_path, main.BATTLES_LOG)
+    assert [r[1:] for r in battle["redeployed"]] == [[opposite.x, opposite.y]]
+
+
+def test_spent_card_gets_no_more_drops(run, frame, monkeypatch):
+    monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 60.0)
+    code, taps = run([(SCOUT_AT, SCOUT), (44, 3 * CHECK)])
+    assert as_planned(taps, frame(SCOUT_AT)) == expected_deploy(frame(SCOUT_AT))
