@@ -2,8 +2,8 @@
 
 import pytest
 
-from policy.navigator import (ABORT, DEPLOY, GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS, STALL_SECONDS, TAP,
-                              WAIT, battle_stalled, decide, gate_open)
+from policy.navigator import (ABORT, DEPLOY, GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS, STALL_SECONDS,
+                              STAR_STABLE_FRAMES, TAP, WAIT, battle_stalled, decide, gate_open, star_won)
 from policy.thresholds import MIN_DARK, MIN_ELIXIR, MIN_GOLD, should_attack
 from vision.loot import LootReading
 from vision.screens import Screen
@@ -90,3 +90,9 @@ def test_stall_counts_from_the_last_loot_change():
 def test_unread_panel_counts_from_the_deploy():
     assert not battle_stalled([], STALL_SECONDS - 0.1)
     assert battle_stalled([], STALL_SECONDS)
+
+
+def test_star_needs_surrender_first_and_end_battle_to_hold():
+    assert star_won(True, STAR_STABLE_FRAMES)
+    assert not star_won(True, STAR_STABLE_FRAMES - 1)  # one frame can be a misread
+    assert not star_won(False, STAR_STABLE_FRAMES + 50)  # End Battle before any troop landed

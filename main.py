@@ -29,8 +29,8 @@ import cv2
 from capture.adb import connect, grab_frame
 from control.tap import tap_match, tap_point
 from policy import thresholds
-from policy.navigator import (ABORT, DEPLOY, GATE_TIMEOUT, PATIENCE_SECONDS, STALL_SECONDS, TAP, WAIT, Action,
-                              battle_stalled, decide, gate_open)
+from policy.navigator import (ABORT, DEPLOY, END_AT_STAR, GATE_TIMEOUT, PATIENCE_SECONDS, STALL, STALL_SECONDS, STAR,
+                              TAP, WAIT, Action, battle_stalled, decide, gate_open, star_won)
 from vision.anchors import THRESHOLD, Match, peak_scores
 from vision.buildings import MODEL_PATH, Building, detect_buildings, load_detector
 from vision.buttons import load_button_templates
@@ -161,6 +161,7 @@ def save_run() -> str:
         "iterations": ITERATIONS,
         "hero_ability_delay": HERO_ABILITY_DELAY,
         "stall_seconds": STALL_SECONDS,
+        "end_at_star": END_AT_STAR,
         "battle_frame_seconds": BATTLE_FRAME_SECONDS,
     })
     return stamp
@@ -199,13 +200,15 @@ def save_base(frame, run_id: str, reading: LootReading, decision: str, buildings
 
 
 def save_battle(frame, run_id: str, result: LootReading, base_id: str | None, battle_seconds: float | None,
-                trace: list[list], ended_early: bool, battle_frames: list[list], final_frame: str | None,
+                trace: list[list], ended_by: str | None, battle_frames: list[list], final_frame: str | None,
                 deployed: list[list], redeployed: list[list]) -> None:
     """Log a settled result to battles.jsonl with its frame, so a misread "You got" can be read
     again. `base` is the attacked base's id in bases.jsonl; None (and no duration) when this run
     did not deploy the army, e.g. it was started mid-battle. `trace` is the battle screen's
     Available Loot each time it changed, as [seconds since deploy, gold, elixir, dark elixir].
-    `ended_early` is True when the bot ended the battle on a loot stall rather than the timer.
+    `ended_by` is the rule the bot ended the battle on, "star" (first star won) or "stall" (loot
+    stopped coming); None when the game ended it. `ended_early` is the same fact as a bool, kept
+    for the records written before there were two rules.
     `battle_frames` are [seconds since deploy, file] every BATTLE_FRAME_SECONDS; `final_frame` is
     the last battle frame before the result: what the army left standing. `deployed` is the deploy
     points the army actually went down on (the base record's are from the frame it was judged on);
@@ -221,7 +224,8 @@ def save_battle(frame, run_id: str, result: LootReading, base_id: str | None, ba
         # From the army going down to "You got" settling: includes the count-up and RESULT_SETTLE_SECONDS.
         "battle_seconds": None if battle_seconds is None else round(battle_seconds, 1),
         "loot_trace": trace,
-        "ended_early": ended_early,  # a stall the rule misjudged shows as loot cut short here
+        "ended_early": ended_by is not None,  # a rule that misjudged shows as loot cut short here
+        "ended_by": ended_by,
         "deploy_points": deployed,
         "redeployed": redeployed,
         "battle_frames": battle_frames,
@@ -316,7 +320,9 @@ def main() -> int:
     base_id = None  # the base on screen, once judged; it becomes attacked_id only when the army goes down
     deployed = []  # the deploy points the army went down on
     trace: list[list] = []  # this battle's Available Loot readings, one per change (Phase 5f's stall window)
-    ended_early = False  # the bot tapped End Battle / Surrender on this battle
+    ended_by = None  # the rule (STAR or STALL) the bot tapped End Battle / Surrender on, this battle
+    surrender_seen = False  # this battle's button has read Surrender: a troop landed, no star yet
+    star_frames = 0  # battle frames in a row showing End Battle since then: the first star
     battle_frames: list[list] = []  # [seconds since deploy, file] kept every BATTLE_FRAME_SECONDS
     last_battle = None  # the latest battle frame since the deploy, kept as final_battle_frame with the result
     searched_at = None  # when Attack (army screen) or Next was last tapped
@@ -341,6 +347,7 @@ def main() -> int:
             if since >= len(battle_frames) * BATTLE_FRAME_SECONDS:
                 tag = attacked_id or f"{datetime.now():%Y%m%d_%H%M%S_%f}"
                 battle_frames.append([round(since, 1), save_png(frame, f"battle_{tag}_{since:05.1f}.png")])
+            surrender_seen = surrender_seen or "surrender" in matches
             left = read_loot(frame, digits)
             if left.ok:  # the end-of-battle banner dims the panel; the frame before it shows what was left standing
                 last_battle = frame
@@ -348,6 +355,8 @@ def main() -> int:
             if left.ok and (not trace or trace[-1][1:] != values):
                 trace.append([round(clock() - deployed_at, 1), *values])
 
+        on_star = screen is Screen.BATTLE and surrender_seen and "end-battle" in matches
+        star_frames = star_frames + 1 if on_star else 0
         frames_on_screen = frames_on_screen + 1 if screen is last_screen else 1
         last_screen = screen
 
@@ -399,13 +408,17 @@ def main() -> int:
             print(run_summary(looted, searches, (clock() - started) / 60))
             return 0
 
-        # Phase 5f: once the whole army is down and every ability used, end a battle that stopped paying.
-        end_with = None
+        # Once the whole army is down and every ability used: end at the first star (while END_AT_STAR), or,
+        # Phase 5f, when the battle has stopped paying. The stall is the fallback for a battle with no star.
+        end_with, end_rule = None, STALL
         if screen is Screen.BATTLE and deployed_at is not None and not heroes and not troops:
-            if battle_stalled(trace, now - deployed_at):
+            if END_AT_STAR and star_won(surrender_seen, star_frames):
+                end_with, end_rule = "end-battle", STAR
+            elif battle_stalled(trace, now - deployed_at):
                 end_with = "end-battle" if "end-battle" in matches else "surrender"  # End Battle once a star is won
 
-        action = decide(screen, settled if screen is Screen.RESULT else scout_settled, unknown_seconds, end_with)
+        action = decide(screen, settled if screen is Screen.RESULT else scout_settled, unknown_seconds, end_with,
+                        end_rule)
         judged = scout_settled is not None and not scout_saved
         if judged:
             buildings = detect_buildings(frame, detector)
@@ -446,8 +459,9 @@ def main() -> int:
             print(f"        {run_summary(looted, searches, (clock() - started) / 60)}")
             final = None if last_battle is None else save_png(last_battle, f"battle_{attacked_id}_final.png")
             save_battle(frame, run_id, result, attacked_id, None if deployed_at is None else now - deployed_at, trace,
-                        ended_early, battle_frames, final, deployed, redeployed)
-            attacked_id, deployed_at, trace, ended_early, deployed, redeployed = None, None, [], False, [], []
+                        ended_by, battle_frames, final, deployed, redeployed)
+            attacked_id, deployed_at, trace, ended_by, deployed, redeployed = None, None, [], None, [], []
+            surrender_seen = False
             battle_frames, last_battle = [], None
 
         # One frame per unrecognized stretch that outlasts a cloud, plus the one it gives up on
@@ -488,7 +502,7 @@ def main() -> int:
             if action.anchor in ("attack-button", "next-button"):  # the clouds start here
                 searched_at = clock()
             if action.anchor in ("end-battle", "surrender"):
-                ended_early = True
+                ended_by = ended_by or end_rule  # a missed tap is repeated; the rule that first fired is the record
         elif action.kind == DEPLOY:
             if len(slots) != len(DECK):
                 print(f"\ndeck shows {len(slots)} cards but DECK lists {len(DECK)} -- update DECK in main.py",
@@ -496,6 +510,7 @@ def main() -> int:
                 return 1
             else:
                 deployed_at, trace, battle_frames, last_battle = clock(), [], [], None
+                surrender_seen, ended_by = False, None
                 attacked_id, deployed = base_id, [[p.x, p.y] for p in points]
                 heroes = deploy_army(device, slots, points)
                 troops = [slot for slot, (kind, _) in zip(slots, DECK) if kind == "troop"]

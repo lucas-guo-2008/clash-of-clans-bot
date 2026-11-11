@@ -11,6 +11,14 @@ PATIENCE_SECONDS = 20.0
 GATE_TIMEOUT = 4.0  # s; after this the tap is assumed missed and may be repeated
 GATE_STABLE_FRAMES = 2  # a new screen must hold this many frames: a one-frame misread can't release it
 STALL_SECONDS = 30.0  # Available Loot unchanged this long ends the battle (longest live mid-battle gap: 17.6 s)
+# Under test, not settled: replays of 133 logged battles say ending at the first star earns ~+60% per hour,
+# but no battle has been ended there live. False restores the stall rule alone.
+END_AT_STAR = True
+STAR_STABLE_FRAMES = 2  # End Battle must hold this many frames after Surrender: a one-frame misread can't end a battle
+
+STAR = "star"
+STALL = "stall"
+END_WHY = {STAR: "first star won, end the battle", STALL: "loot has stopped coming, end the battle"}
 
 TAP = "tap"
 WAIT = "wait"
@@ -26,10 +34,10 @@ class Action:
 
 
 def decide(screen: Screen, reading: LootReading | None, unknown_seconds: float,
-           end_with: str | None = None) -> Action:
+           end_with: str | None = None, end_rule: str = STALL) -> Action:
     """Given a screen, the loot showing on it, and how long we have
     been lost, return an action. `end_with` is the button
-    that ends this battle (End Battle or Surrender), once main.py has judged it stalled."""
+    that ends this battle (End Battle or Surrender), once main.py has judged it over by `end_rule`."""
 
     if screen is Screen.HOME:
         return Action(TAP, "battle", "open the attack menu")
@@ -49,7 +57,7 @@ def decide(screen: Screen, reading: LootReading | None, unknown_seconds: float,
 
     if screen is Screen.BATTLE:
         if end_with is not None:
-            return Action(TAP, end_with, "loot has stopped coming, end the battle")
+            return Action(TAP, end_with, END_WHY[end_rule])
         return Action(WAIT, why="battle in progress")
 
     if screen is Screen.END_CONFIRM:
@@ -84,3 +92,12 @@ def battle_stalled(trace: list[list], since_deploy: float) -> bool:
 
     last_change = trace[-1][0] if trace else 0.0
     return since_deploy - last_change >= STALL_SECONDS
+
+
+def star_won(surrender_seen: bool, end_battle_frames: int) -> bool:
+    """Has this battle earned its first star? The button reads End Battle before the first troop
+    lands, Surrender once one has, and End Battle again at the first star (Town Hall down or 50%),
+    so End Battle alone is not the signal: it counts only after Surrender was seen in this battle.
+    `end_battle_frames` is how many battle frames in a row have shown End Battle since then."""
+
+    return surrender_seen and end_battle_frames >= STAR_STABLE_FRAMES
