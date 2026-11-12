@@ -2,9 +2,9 @@
 
 from vision.loot import LootReading
 
-MIN_GOLD = 400_000
-MIN_ELIXIR = 400_000
-MIN_DARK = 2_000
+MIN_GOLD = 0
+MIN_ELIXIR = 0
+MIN_DARK = 0
 
 
 def should_attack(reading: LootReading) -> bool:

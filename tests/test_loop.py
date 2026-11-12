@@ -2,6 +2,7 @@
 
 import json
 import math
+import random
 import sys
 
 import cv2
@@ -9,7 +10,9 @@ import numpy as np
 import pytest
 
 import main
-from policy.navigator import GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS, STALL_SECONDS, STAR_STABLE_FRAMES
+from policy.navigator import (GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS, STALL_SECONDS,
+                              STAR_STABLE_FRAMES)
+from policy.navigator import STALL as STALL_ARM, STAR as STAR_ARM  # STALL here is a frame count
 from vision.deploy import UI_RECTS, deck_slots, deploy_points
 
 CLOUD = "unknown_20260919_005725_732450.png"
@@ -429,8 +432,12 @@ def test_spent_card_gets_no_more_drops(run, frame, monkeypatch):
 
 # Ending at the first star: End Battle after Surrender, held STAR_STABLE_FRAMES, once the army is down.
 
-def test_battle_is_ended_at_the_first_star(run, frame, tmp_path, monkeypatch):
+@pytest.fixture
+def star_arm(monkeypatch):
     monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 0.0)
+    monkeypatch.setattr(main, "ARMS", (STAR_ARM,))
+
+def test_battle_is_ended_at_the_first_star(run, frame, tmp_path, star_arm):
     code, taps = run([(SCOUT_AT, SCOUT), (SURRENDER_AT, CHECK), (38, HOLD), (39, HOLD), (40, SETTLE + 2),
                       ("cloud", HOLD), 25])
     deploy = expected_deploy(frame(SCOUT_AT))
@@ -440,11 +447,12 @@ def test_battle_is_ended_at_the_first_star(run, frame, tmp_path, monkeypatch):
     assert code == 0
     assert taps[len(deploy) :] == [*heroes, END_BATTLE, OKAY, RETURN_HOME]
     assert battle["ended_by"] == "star" and battle["ended_early"] is True
-    assert battle["battle_seconds"] < STALL_SECONDS  # long before the stall rule could have fired
+    assert battle["battle_seconds"] < STALL_SECONDS
+    assert battle["end_tap"][1:] == battle["loot_trace"][-1][1:] == [179_550, 129_210, 500]
+    assert battle["loot_trace"][-1][0] <= battle["end_tap"][0] < battle["battle_seconds"]
 
 
-def test_battle_with_no_star_falls_back_to_the_stall(run, tmp_path, monkeypatch):
-    monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 0.0)
+def test_battle_with_no_star_falls_back_to_the_stall(run, tmp_path, star_arm):
     code, taps = run([(SCOUT_AT, SCOUT), (SURRENDER_AT, STALL), (39, HOLD), (40, SETTLE + 2), ("cloud", HOLD), 25])
     [battle] = read_log(tmp_path, main.BATTLES_LOG)
 
@@ -453,9 +461,8 @@ def test_battle_with_no_star_falls_back_to_the_stall(run, tmp_path, monkeypatch)
     assert battle["ended_by"] == "stall"
 
 
-def test_end_battle_before_any_surrender_is_not_a_star(run, tmp_path, monkeypatch):
+def test_end_battle_before_any_surrender_is_not_a_star(run, tmp_path, star_arm):
     # The button reads End Battle until the first troop lands, exactly as it does after the first star.
-    monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 0.0)
     code, taps = run([(SCOUT_AT, SCOUT), (38, CHECK + 10), (40, SETTLE + 2), ("cloud", HOLD), 25])
     [battle] = read_log(tmp_path, main.BATTLES_LOG)
 
@@ -464,8 +471,7 @@ def test_end_battle_before_any_surrender_is_not_a_star(run, tmp_path, monkeypatc
     assert battle["ended_by"] is None
 
 
-def test_end_battle_for_one_frame_is_not_a_star(run, monkeypatch):
-    monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 0.0)
+def test_end_battle_for_one_frame_is_not_a_star(run, star_arm):
     flicker = [(38, STAR_STABLE_FRAMES - 1), (SURRENDER_AT, 3)]
     code, taps = run([(SCOUT_AT, SCOUT), (SURRENDER_AT, CHECK), *flicker, *flicker, (40, SETTLE + 2), ("cloud", HOLD), 25])
     assert code == 0
@@ -474,6 +480,7 @@ def test_end_battle_for_one_frame_is_not_a_star(run, monkeypatch):
 
 def test_star_is_not_acted_on_until_the_abilities_have_fired(run, frame, monkeypatch):
     # A star inside HERO_ABILITY_DELAY waits: the heroes still have their abilities to use.
+    monkeypatch.setattr(main, "ARMS", (STAR_ARM,))
     monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 6.0)
     code, taps = run([(SCOUT_AT, SCOUT), (SURRENDER_AT, HOLD), (38, round(6.0 / STEP) + HOLD), (39, HOLD),
                       (40, SETTLE + 2), ("cloud", HOLD), 25])
@@ -484,12 +491,42 @@ def test_star_is_not_acted_on_until_the_abilities_have_fired(run, frame, monkeyp
     assert taps[len(deploy) :] == [*heroes, END_BATTLE, OKAY, RETURN_HOME]  # abilities first, then the end
 
 
-def test_star_is_ignored_with_the_rule_switched_off(run, tmp_path, monkeypatch):
+def test_stall_arm_ignores_the_star(run, monkeypatch, tmp_path):
     monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 0.0)
-    monkeypatch.setattr(main, "END_AT_STAR", False)
+    monkeypatch.setattr(main, "ARMS", (STALL_ARM,))
     code, taps = run([(SCOUT_AT, SCOUT), (SURRENDER_AT, CHECK), (38, 3 * HOLD), (40, SETTLE + 2), ("cloud", HOLD), 25])
-    [run_record] = read_log(tmp_path, main.RUNS_LOG)
+    [battle] = read_log(tmp_path, main.BATTLES_LOG)
 
     assert code == 0
     assert END_BATTLE not in taps
-    assert run_record["end_at_star"] is False
+    assert battle["arm"] == "stall" and battle["ended_by"] is None and battle["end_tap"] is None
+
+
+def test_each_battle_draws_its_arm_and_records_it(run, monkeypatch, tmp_path):
+    # Per battle, not per run: shown loot drifts from run to run, which would confound a per-run arm.
+    monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 0.0)
+    monkeypatch.setattr(main, "ITERATIONS", 4)
+    monkeypatch.setattr(main, "rng", random.Random(1))
+    battle = [(SCOUT_AT, SCOUT), (SURRENDER_AT, CHECK), (38, 3 * HOLD), (39, HOLD), (40, SETTLE + 2), ("cloud", HOLD)]
+    home = [(25, HOLD), (2, HOLD), (3, HOLD), ("cloud", HOLD)]
+    code, taps = run([*battle, *home, *battle, *home, *battle, *home, *battle, 25])
+    battles = read_log(tmp_path, main.BATTLES_LOG)
+    [run_record] = read_log(tmp_path, main.RUNS_LOG)
+
+    assert code == 0
+    assert {b["arm"] for b in battles} == {"star", "stall"}
+    assert [b["ended_by"] for b in battles] == [b["arm"] if b["arm"] == "star" else None for b in battles]
+    assert [b["end_tap"] is not None for b in battles] == [b["arm"] == "star" for b in battles]
+    assert taps.count(END_BATTLE) == sum(b["arm"] == "star" for b in battles)
+    assert run_record["arms"] == ["star", "stall"]
+    assert {k: run_record[k] for k in ("town_hall", "army_boost", "event")} == \
+        {"town_hall": main.TOWN_HALL, "army_boost": main.ARMY_BOOST, "event": main.EVENT}
+
+
+def test_battle_that_never_got_its_army_has_no_arm(run, frame, monkeypatch, tmp_path):
+    monkeypatch.setattr(main, "ITERATIONS", 2)
+    blank = no_outline(frame(SCOUT_AT))
+    run([(SCOUT_AT, SCOUT), (38, HOLD), (40, SETTLE + 2), ("cloud", HOLD), (25, HOLD), (2, HOLD), (3, HOLD),
+         ("cloud", HOLD), (blank, SCOUT), (9, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 25])
+    first, second = read_log(tmp_path, main.BATTLES_LOG)
+    assert first["arm"] in ("star", "stall") and second["arm"] is None

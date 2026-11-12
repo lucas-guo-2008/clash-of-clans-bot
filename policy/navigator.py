@@ -11,14 +11,12 @@ PATIENCE_SECONDS = 20.0
 GATE_TIMEOUT = 4.0  # s; after this the tap is assumed missed and may be repeated
 GATE_STABLE_FRAMES = 2  # a new screen must hold this many frames: a one-frame misread can't release it
 STALL_SECONDS = 30.0  # Available Loot unchanged this long ends the battle (longest live mid-battle gap: 17.6 s)
-# Under test, not settled: replays of 133 logged battles say ending at the first star earns ~+60% per hour,
-# but no battle has been ended there live. False restores the stall rule alone.
-END_AT_STAR = True
 STAR_STABLE_FRAMES = 2  # End Battle must hold this many frames after Surrender: a one-frame misread can't end a battle
 
 STAR = "star"
 STALL = "stall"
 END_WHY = {STAR: "first star won, end the battle", STALL: "loot has stopped coming, end the battle"}
+ARMS = (STAR, STALL)
 
 TAP = "tap"
 WAIT = "wait"
