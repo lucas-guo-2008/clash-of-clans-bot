@@ -23,16 +23,15 @@ UNKNOWN = ROOT / "templates" / "unknown"
 
 # What the saved frames were recorded with. main.py and policy/ hold whatever the last live run needed
 # (a data run's zero thresholds, tonight's deck, a demo's full battles); the tests must not depend on it.
-MIN_GOLD, MIN_ELIXIR, MIN_DARK = 400_000, 400_000, 2_000
+MIN_TOTAL, MAX_NEXTS = 800_000, 15  # shown gold + elixir; frame 24, the base the loop tests attack, clears it
 DECK = (("troop", 24), ("skip", 0), ("hero", 1), ("hero", 1), ("spell", 11))  # the five cards on frames 9-45
 SIX_CARD_DECK = (("troop", 24), ("skip", 0), ("hero", 1), ("hero", 1), ("hero", 1), ("spell", 11))  # frame 46
 
 
 @pytest.fixture(autouse=True)
 def pinned_settings(monkeypatch):
-    monkeypatch.setattr(thresholds, "MIN_GOLD", MIN_GOLD)
-    monkeypatch.setattr(thresholds, "MIN_ELIXIR", MIN_ELIXIR)
-    monkeypatch.setattr(thresholds, "MIN_DARK", MIN_DARK)
+    monkeypatch.setattr(thresholds, "MIN_TOTAL", MIN_TOTAL)
+    monkeypatch.setattr(thresholds, "MAX_NEXTS", MAX_NEXTS)
     monkeypatch.setattr(main, "DECK", DECK)
     monkeypatch.setattr(main, "ITERATIONS", 1)
     monkeypatch.setattr(main, "ARMS", (STAR,))

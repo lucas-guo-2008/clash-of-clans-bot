@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from policy import thresholds
 from policy.thresholds import should_attack
 from vision.loot import LootReading
 from vision.screens import Screen
@@ -39,10 +40,11 @@ class Action:
 
 
 def decide(screen: Screen, reading: LootReading | None, unknown_seconds: float,
-           end_with: str | None = None, end_rule: str = STALL) -> Action:
+           end_with: str | None = None, end_rule: str = STALL, nexts: int = 0) -> Action:
     """Given a screen, the loot showing on it, and how long we have
     been lost, return an action. `end_with` is the button
-    that ends this battle (End Battle or Surrender), once main.py has judged it over by `end_rule`."""
+    that ends this battle (End Battle or Surrender), once main.py has judged it over by `end_rule`.
+    `nexts` is how many bases this search has skipped in a row."""
 
     if screen is Screen.HOME:
         return Action(TAP, "battle", "open the attack menu")
@@ -57,7 +59,9 @@ def decide(screen: Screen, reading: LootReading | None, unknown_seconds: float,
         if reading is None:
             return Action(WAIT, why="waiting for the loot panel to settle")
         if should_attack(reading):
-            return Action(DEPLOY, why="loot clears the thresholds")
+            return Action(DEPLOY, why="loot clears the threshold")
+        if reading.ok and nexts >= thresholds.MAX_NEXTS:
+            return Action(DEPLOY, why=f"{nexts} bases skipped in a row, attack this one")
         return Action(TAP, "next-button", "spend 900 on the next base")
 
     if screen is Screen.BATTLE:

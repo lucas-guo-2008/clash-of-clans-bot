@@ -163,7 +163,7 @@ def save_run() -> str:
         "commit": git("rev-parse", "HEAD"),
         "dirty": None if status is None else bool(status),  # local settings, e.g. data-run thresholds
         "detector": MODEL_PATH.name,
-        "thresholds": {"gold": thresholds.MIN_GOLD, "elixir": thresholds.MIN_ELIXIR, "dark_elixir": thresholds.MIN_DARK},
+        "thresholds": {"total": thresholds.MIN_TOTAL, "max_nexts": thresholds.MAX_NEXTS},
         "deck": DECK,
         "iterations": ITERATIONS,
         "hero_ability_delay": HERO_ABILITY_DELAY,
@@ -178,7 +178,7 @@ def save_run() -> str:
 
 
 def base_record(stamp: str, run_id: str, reading: LootReading, decision: str, buildings: list[Building],
-                points: list[DeployPoint], frame_file: str, search_seconds: float | None) -> dict:
+                points: list[DeployPoint], frame_file: str, search_seconds: float | None, nexts: int = 0) -> dict:
     """One judged base as Phase 5 will read it back: enough to compute features for a base whose
     frame was not kept. A battle record points back at it by `id`."""
 
@@ -189,6 +189,7 @@ def base_record(stamp: str, run_id: str, reading: LootReading, decision: str, bu
         "frame": frame_file,
         # From the Attack / Next tap to this base being judged: clouds, panel settling, all of it.
         "search_seconds": None if search_seconds is None else round(search_seconds, 1),
+        "nexts": nexts,  # bases skipped in a row before this one; an attack at MAX_NEXTS is the search cap's
         **loot_fields(reading, "loot"),
         # Detections depend on the model: a retrained one would count differently.
         "detector": MODEL_PATH.name,
@@ -198,14 +199,15 @@ def base_record(stamp: str, run_id: str, reading: LootReading, decision: str, bu
 
 
 def save_base(frame, run_id: str, reading: LootReading, decision: str, buildings: list[Building],
-              points: list[DeployPoint], search_seconds: float | None) -> str:
+              points: list[DeployPoint], search_seconds: float | None, nexts: int = 0) -> str:
     """Log a judged base to bases.jsonl with its frame, and return its id. Skipped bases keep their
     frame too: unlabeled detector data. `decision` is the loot rule's; an "attack" with no battle
     pointing at it was skipped for want of a deploy outline. (index.csv is the frozen Phase 4 log.)"""
 
     stamp = f"{datetime.now():%Y%m%d_%H%M%S_%f}"
     frame_file = save_png(frame, f"scout_{stamp}.png")
-    append_record(BASES_LOG, base_record(stamp, run_id, reading, decision, buildings, points, frame_file, search_seconds))
+    append_record(BASES_LOG, base_record(stamp, run_id, reading, decision, buildings, points, frame_file,
+                                         search_seconds, nexts))
     return stamp
 
 
@@ -346,6 +348,7 @@ def main() -> int:
     run_id = None if args.dry_run else save_run()
     looted = (0, 0, 0)  # gold, elixir, dark elixir over every readable result
     searches = 0
+    nexts = 0  # bases skipped in a row since the last deploy (the search cap, thresholds.MAX_NEXTS)
     started = clock()
     tapped_on, tapped_at = None, 0.0  # the screen of the last gated tap, and when
     last_screen, frames_on_screen = None, 0
@@ -436,13 +439,13 @@ def main() -> int:
                 end_with = "end-battle" if "end-battle" in matches else "surrender"  # End Battle once a star is won
 
         action = decide(screen, settled if screen is Screen.RESULT else scout_settled, unknown_seconds, end_with,
-                        end_rule)
+                        end_rule, nexts)
         judged = scout_settled is not None and not scout_saved
         if judged:
             buildings = detect_buildings(frame, detector)
             decision = "attack" if action.kind == DEPLOY else "next"
             base_id = save_base(frame, run_id, scout_settled, decision, buildings, deploy_points(frame),
-                                None if searched_at is None else now - searched_at)
+                                None if searched_at is None else now - searched_at, nexts)
             scout_saved = True
 
         if tapped_on is not None and gate_open(screen, tapped_on, now - tapped_at, frames_on_screen):
@@ -518,6 +521,8 @@ def main() -> int:
             tapped_on, tapped_at = screen, clock()
             if action.anchor in ("find-match", "next-button"):
                 searches += 1
+            if action.anchor == "next-button":
+                nexts += 1
             if action.anchor in ("attack-button", "next-button"):  # the clouds start here
                 searched_at = clock()
             if action.anchor in ("end-battle", "surrender"):
@@ -531,6 +536,7 @@ def main() -> int:
                 return 1
             else:
                 deployed_at, trace, battle_frames, last_battle = clock(), [], [], None
+                nexts = 0
                 surrender_seen, ended_by, end_tap, arm = False, None, None, rng.choice(ARMS)
                 attacked_id, deployed = base_id, [[p.x, p.y] for p in points]
                 heroes = deploy_army(device, slots, points)

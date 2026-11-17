@@ -36,8 +36,9 @@ adb connect 127.0.0.1:5555
   has a different number of cards, the bot stops rather than guess.
 - **`ITERATIONS`** in `main.py` — battles per run (default 1). The army refills on its own back home;
   more than one battle is untested live.
-- **Loot thresholds** in `policy/thresholds.py` — gold, elixir and dark elixir must all clear
-  them (default 400k / 400k / 2k).
+- **Loot threshold** in `policy/thresholds.py` — a base is attacked when its shown gold + elixir
+  reaches `MIN_TOTAL` (default 1.5M). After `MAX_NEXTS` (15) skips in a row the next readable base
+  is attacked anyway, so a threshold set too high cannot search forever.
 
 **Every search and every Next costs 900 gold**, so strict thresholds spend more before a base
 qualifies.

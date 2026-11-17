@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 import main
+from policy import thresholds
 from policy.navigator import (GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS, STALL_SECONDS,
                               STAR_STABLE_FRAMES)
 from policy.navigator import FULL as FULL_ARM, STALL as STALL_ARM, STAR as STAR_ARM  # STALL here is a frame count
@@ -119,6 +120,31 @@ def test_hero_abilities_fire_once_in_battle(run, frame, monkeypatch):
 
     assert code == 0
     assert taps[len(deploy) :] == [*heroes, RETURN_HOME]  # first battle frame; abilities are never gated
+
+
+def test_base_under_the_threshold_is_skipped(run, monkeypatch, tmp_path):
+    monkeypatch.setattr(thresholds, "MIN_TOTAL", 50_000_000)
+    _, taps = run([(SCOUT_AT, SCOUT)])
+    [base] = read_log(tmp_path, main.BASES_LOG)
+    assert taps == [NEXT]
+    assert base["decision"] == "next" and base["nexts"] == 0
+
+
+def test_search_cap_attacks_after_enough_skips_in_a_row(run, frame, monkeypatch, tmp_path):
+    # A threshold the offers no longer reach: after MAX_NEXTS skips the next readable base is attacked.
+    monkeypatch.setattr(thresholds, "MIN_TOTAL", 50_000_000)
+    monkeypatch.setattr(thresholds, "MAX_NEXTS", 2)
+    skip = [(SCOUT_AT, SCOUT), ("cloud", HOLD)]
+    code, taps = run([*skip, *skip, (SCOUT_AT, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 25])
+    deploy = expected_deploy(frame(SCOUT_AT))
+    bases = read_log(tmp_path, main.BASES_LOG)
+    [run_record] = read_log(tmp_path, main.RUNS_LOG)
+
+    assert code == 0
+    assert taps[:2] == [NEXT, NEXT]
+    assert as_planned(taps[2 : 2 + len(deploy)], frame(SCOUT_AT)) == deploy
+    assert [(b["decision"], b["nexts"]) for b in bases] == [("next", 0), ("next", 1), ("attack", 2)]
+    assert run_record["thresholds"] == {"total": 50_000_000, "max_nexts": 2}
 
 
 def test_six_card_deck_drops_all_three_heroes(run, frame, monkeypatch):

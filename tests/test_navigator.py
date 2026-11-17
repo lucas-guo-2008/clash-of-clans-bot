@@ -5,7 +5,7 @@ import pytest
 from policy.navigator import (ABORT, DEPLOY, GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS, STALL_SECONDS,
                               STAR_STABLE_FRAMES, TAP, WAIT, battle_stalled, decide, gate_open, star_won)
 from policy.thresholds import should_attack
-from tests.conftest import MIN_DARK, MIN_ELIXIR, MIN_GOLD  # pinned there, whatever thresholds.py holds
+from tests.conftest import MAX_NEXTS, MIN_TOTAL  # pinned there, whatever thresholds.py holds
 from vision.loot import LootReading
 from vision.screens import Screen
 
@@ -14,7 +14,8 @@ def loot(gold, elixir, dark, ok=True) -> LootReading:
     return LootReading(gold, elixir, dark, ok, rows=())  # rows only matter for logging
 
 
-RICH = loot(MIN_GOLD, MIN_ELIXIR, MIN_DARK)
+RICH = loot(MIN_TOTAL - 300_000, 300_000, 0)  # exactly the threshold, and no dark elixir
+POOR = loot(MIN_TOTAL - 300_000, 299_999, 50_000)  # one short; dark elixir does not count
 
 
 @pytest.mark.parametrize("screen, kind, anchor", [
@@ -44,9 +45,9 @@ def test_rich_base_is_attacked():
 
 
 @pytest.mark.parametrize("reading", [
-    loot(MIN_GOLD - 1, MIN_ELIXIR, MIN_DARK),
-    loot(MIN_GOLD, MIN_ELIXIR - 1, MIN_DARK),
-    loot(MIN_GOLD, MIN_ELIXIR, MIN_DARK - 1),
+    POOR,
+    loot(MIN_TOTAL - 1, 0, 0),
+    loot(0, MIN_TOTAL - 1, 0),
     loot(None, None, None, ok=False),
 ])
 def test_poor_or_unread_base_is_skipped(reading):
@@ -54,8 +55,21 @@ def test_poor_or_unread_base_is_skipped(reading):
     assert (action.kind, action.anchor) == (TAP, "next-button")
 
 
-def test_thresholds_are_inclusive():
+def test_threshold_is_on_the_total_and_inclusive():
     assert should_attack(RICH)
+    assert should_attack(loot(MIN_TOTAL, 0, 0)) and should_attack(loot(0, MIN_TOTAL, 0))  # either resource alone
+    assert not should_attack(POOR)
+
+
+def test_search_cap_attacks_a_poor_base_after_enough_skips_in_a_row():
+    # Offers that drifted below the threshold must not search forever.
+    assert decide(Screen.SCOUT, POOR, 0, nexts=MAX_NEXTS - 1).kind == TAP
+    assert decide(Screen.SCOUT, POOR, 0, nexts=MAX_NEXTS).kind == DEPLOY
+
+
+def test_search_cap_never_attacks_an_unread_base():
+    action = decide(Screen.SCOUT, loot(None, None, None, ok=False), 0, nexts=MAX_NEXTS + 5)
+    assert (action.kind, action.anchor) == (TAP, "next-button")
 
 
 def test_unknown_waits_out_its_patience_then_aborts():
