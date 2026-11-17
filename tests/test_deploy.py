@@ -5,7 +5,7 @@ import pytest
 
 from vision.deploy import MAX_POINTS, UI_RECTS, card_spent, deck_slots, deploy_points
 
-WITH_OUTLINE = [5, 6, 9, *range(10, 18), 41, 42]
+WITH_OUTLINE = [5, 6, 9, *range(10, 18), 41, 42, 47]
 NO_OUTLINE = [0, 1, 2, 3, 4, 7, 8, 43]  # 4 and 43 are scout frames with no outline drawn; 43 has red walls
 
 
@@ -29,6 +29,13 @@ REFUSED = {
 def test_no_point_past_a_wall(frame, n):
     for p in deploy_points(frame(n)):
         assert all(abs(p.x - x) + abs(p.y - y) > 60 for x, y in REFUSED[n]), (p.x, p.y)
+
+
+def test_outline_cut_by_obstacles_still_counts(frame):
+    # Frame 47: obstacles split the north-west and top outline into 125-147 px pieces, under
+    # MIN_SPAN; dropping them left the whole upper-left side without a point.
+    upper_left = [p for p in deploy_points(frame(47)) if p.x < 960 and p.y < 250]
+    assert len(upper_left) >= 2
 
 
 @pytest.mark.parametrize("n", NO_OUTLINE)

@@ -19,6 +19,11 @@ RIDGE_KERNEL = 9
 RIDGE_MIN = 40
 
 MIN_SPAN = 150
+# Obstacles drawn over the outline cut it into shorter pieces (frame 47: 125-147 px on the north
+# edge). A short piece still counts if it is thin: the 2 px line has ~2.3 mask px per px of span,
+# decorations 7+.
+SHORT_SPAN = 60
+MAX_PX_PER_SPAN = 3.0
 
 WALL_HALF = 2.5
 WALL_REACH = 6
@@ -81,7 +86,8 @@ def outline_lines(mask: np.ndarray) -> np.ndarray:
 
     _, labels, stats, _ = cv2.connectedComponentsWithStats(lines, connectivity=8)
     span = np.maximum(stats[:, cv2.CC_STAT_WIDTH], stats[:, cv2.CC_STAT_HEIGHT])
-    keep = span >= MIN_SPAN
+    thin = stats[:, cv2.CC_STAT_AREA] <= MAX_PX_PER_SPAN * span
+    keep = (span >= MIN_SPAN) | ((span >= SHORT_SPAN) & thin)
     keep[0] = False  # background
     return np.where(keep[np.asarray(labels, dtype=np.intp)], 255, 0).astype(np.uint8)
 

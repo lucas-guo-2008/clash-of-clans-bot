@@ -27,7 +27,7 @@ found (green).*
 | | |
 |---|---|
 | **Ending at the first star** | **about +45% loot per hour** (41.9 vs 29.2 million per hour), measured live over 84 battles with each battle assigned its rule at random |
-| Predicted before the test | +42%, by replaying the new rule on logged battles |
+| Replay check | +42%, replaying the star rule on the same night's stall-arm battles (prediction fixed beforehand: +50–65%) |
 | Loot threshold | about +20% more, estimated by replay; not yet measured live |
 | Building detector | finds 98.7% of loot buildings on unseen bases (YOLO, trained on 276 hand-checked frames) |
 | Reading numbers | exact on every saved frame, with no OCR library |
