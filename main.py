@@ -30,8 +30,8 @@ import cv2
 from capture.adb import connect, grab_frame
 from control.tap import tap_match, tap_point
 from policy import thresholds
-from policy.navigator import (ABORT, ARMS, DEPLOY, GATE_TIMEOUT, PATIENCE_SECONDS, STALL, STALL_SECONDS, STAR, TAP,
-                              WAIT, Action, battle_stalled, decide, gate_open, star_won)
+from policy.navigator import (ABORT, ARMS, DEPLOY, FULL, GATE_TIMEOUT, PATIENCE_SECONDS, STALL, STALL_SECONDS, STAR,
+                              TAP, WAIT, Action, battle_stalled, decide, gate_open, star_won)
 from vision.anchors import THRESHOLD, Match, peak_scores
 from vision.buildings import MODEL_PATH, Building, detect_buildings, load_detector
 from vision.buttons import load_button_templates
@@ -57,19 +57,19 @@ RUNS_LOG = "runs.jsonl"  # in SCOUT_DIR: one per start, the code and settings ev
 BATTLE_FRAME_SECONDS = 5.0  # a battle frame is kept this often from the deploy (training data for what got destroyed)
 WINDOW = "bot"
 
-ITERATIONS = 10
+ITERATIONS = 40
 rng = random.Random()  # draws each battle's arm; the tests seed their own
 
 TOWN_HALL = 11
-ARMY_BOOST = None
-EVENT = None
+ARMY_BOOST = False
+EVENT = False
 
 # The army, slot by slot left to right, as (kind, count). Slots are found on screen; only
 # what is in them is declared here, so reordering the army means editing this line.
 #   troop: tap the card, then `count` drops cycling the deploy points
 #   hero:  tap the card, one drop; the ability fires HERO_ABILITY_DELAY s later (card tapped again)
 #   spell: located but not cast -- aiming waits for building detection (Phase 4/5)
-DECK = (("troop", 24), ("skip", 0), ("hero", 1), ("hero", 1), ("spell", 11))
+DECK = (("troop", 24), ("skip", 0), ("hero", 1), ("hero", 1), ("hero", 1), ("spell", 11))
 HERO_ABILITY_DELAY = 10.0
 MIN_DEPLOY_POINTS = 12  # fewer means the outline was not found (not fully drawn yet, or a dark map skin)
 OUTLINE_SECONDS = 5.0
@@ -218,7 +218,7 @@ def save_battle(frame, run_id: str, result: LootReading, base_id: str | None, ba
     Available Loot each time it changed, as [seconds since deploy, gold, elixir, dark elixir].
     `arm` is the stop rule drawn for this battle (None when this run did not deploy it).
     `ended_by` is the rule the bot ended the battle on, "star" (first star won) or "stall" (loot
-    stopped coming); None when the game ended it. `ended_early` is the same fact as a bool, kept
+    stopped coming); None when the game ended it, as it always does on the "full" arm. `ended_early` is the same fact as a bool, kept
     for the records written before there were two rules. `end_tap` is [seconds since deploy, gold,
     elixir, dark elixir] at the first end tap: the time, for the end lag, and the Available Loot last
     read, for what arrived after the tap. None when the bot did not end the battle.
@@ -425,10 +425,11 @@ def main() -> int:
             print(run_summary(looted, searches, (clock() - started) / 60))
             return 0
 
-        # Once the whole army is down and every ability used: end at the first star (while END_AT_STAR), or,
+        # Once the whole army is down and every ability used: end at the first star (the star arm), or,
         # Phase 5f, when the battle has stopped paying. The stall is the fallback for a battle with no star.
+        # The full arm never ends a battle: the game does.
         end_with, end_rule = None, STALL
-        if screen is Screen.BATTLE and deployed_at is not None and not heroes and not troops:
+        if screen is Screen.BATTLE and deployed_at is not None and not heroes and not troops and arm != FULL:
             if arm == STAR and star_won(surrender_seen, star_frames):
                 end_with, end_rule = "end-battle", STAR
             elif battle_stalled(trace, now - deployed_at):

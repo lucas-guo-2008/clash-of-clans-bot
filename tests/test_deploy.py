@@ -45,6 +45,7 @@ DECK_LEFTS = {
     6: [140, 285, 447, 609, 771],
     7: [134, 299, 463, 606, 769],  # battle: the selected card is raised and wider
     **{n: CURRENT_DECK for n in [9, *range(10, 18)]},
+    46: [140, 302, 463, 608, 753, 914],  # six cards: a third hero (Town Hall 11, 2026-11-16)
 }
 
 

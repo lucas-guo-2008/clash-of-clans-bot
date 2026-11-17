@@ -13,10 +13,17 @@ GATE_STABLE_FRAMES = 2  # a new screen must hold this many frames: a one-frame m
 STALL_SECONDS = 30.0  # Available Loot unchanged this long ends the battle (longest live mid-battle gap: 17.6 s)
 STAR_STABLE_FRAMES = 2  # End Battle must hold this many frames after Surrender: a one-frame misread can't end a battle
 
+# How a battle is ended, drawn per battle from ARMS when the army goes down:
+#   star:  at the first star, with the loot stall as the fallback for a battle that never wins one
+#   stall: only on the loot stall (the rule before 2026-11-16)
+#   full:  never by the bot; the battle runs until the game ends it (for demonstrations)
 STAR = "star"
 STALL = "stall"
+FULL = "full"
 END_WHY = {STAR: "first star won, end the battle", STALL: "loot has stopped coming, end the battle"}
-ARMS = (STAR, STALL)
+# Live A/B 2026-11-16, 84 battles: star earned about +45% loot per hour over stall. (FULL,) shows whole
+# battles; (STAR, STALL) randomizes per battle again for another comparison.
+ARMS = (STAR,)
 
 TAP = "tap"
 WAIT = "wait"

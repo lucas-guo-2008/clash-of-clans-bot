@@ -12,7 +12,8 @@ import pytest
 import main
 from policy.navigator import (GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS, STALL_SECONDS,
                               STAR_STABLE_FRAMES)
-from policy.navigator import STALL as STALL_ARM, STAR as STAR_ARM  # STALL here is a frame count
+from policy.navigator import FULL as FULL_ARM, STALL as STALL_ARM, STAR as STAR_ARM  # STALL here is a frame count
+from tests.conftest import SIX_CARD_DECK
 from vision.deploy import UI_RECTS, deck_slots, deploy_points
 
 CLOUD = "unknown_20260919_005725_732450.png"
@@ -118,6 +119,20 @@ def test_hero_abilities_fire_once_in_battle(run, frame, monkeypatch):
 
     assert code == 0
     assert taps[len(deploy) :] == [*heroes, RETURN_HOME]  # first battle frame; abilities are never gated
+
+
+def test_six_card_deck_drops_all_three_heroes(run, frame, monkeypatch):
+    # Frame 46: the deck since Town Hall 11, with a third hero. DECK declares it; the slots are found.
+    monkeypatch.setattr(main, "DECK", SIX_CARD_DECK)
+    monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 0.0)
+    code, taps = run([(46, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 25])
+    deploy = expected_deploy(frame(46))
+    heroes = [s.centre for s, (kind, _) in zip(deck_slots(frame(46)), main.DECK) if kind == "hero"]
+
+    assert code == 0
+    assert len(heroes) == 3 and deploy.count("point") == 24 + 3
+    assert as_planned(taps[: len(deploy)], frame(46)) == deploy
+    assert taps[len(deploy) :] == [*heroes, RETURN_HOME]
 
 
 def test_deck_that_does_not_match_DECK_aborts_without_tapping(run, monkeypatch):
@@ -502,10 +517,23 @@ def test_stall_arm_ignores_the_star(run, monkeypatch, tmp_path):
     assert battle["arm"] == "stall" and battle["ended_by"] is None and battle["end_tap"] is None
 
 
+def test_full_arm_never_ends_the_battle(run, monkeypatch, tmp_path):
+    # For demonstrations: a star is showing and the loot has stalled, and the bot still waits for the game.
+    monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 0.0)
+    monkeypatch.setattr(main, "ARMS", (FULL_ARM,))
+    code, taps = run([(SCOUT_AT, SCOUT), (SURRENDER_AT, CHECK), (38, STALL + 10), (40, SETTLE + 2), ("cloud", HOLD), 25])
+    [battle] = read_log(tmp_path, main.BATTLES_LOG)
+
+    assert code == 0
+    assert END_BATTLE not in taps and SURRENDER not in taps
+    assert battle["arm"] == "full" and battle["ended_by"] is None and battle["ended_early"] is False
+
+
 def test_each_battle_draws_its_arm_and_records_it(run, monkeypatch, tmp_path):
     # Per battle, not per run: shown loot drifts from run to run, which would confound a per-run arm.
     monkeypatch.setattr(main, "HERO_ABILITY_DELAY", 0.0)
     monkeypatch.setattr(main, "ITERATIONS", 4)
+    monkeypatch.setattr(main, "ARMS", (STAR_ARM, STALL_ARM))
     monkeypatch.setattr(main, "rng", random.Random(1))
     battle = [(SCOUT_AT, SCOUT), (SURRENDER_AT, CHECK), (38, 3 * HOLD), (39, HOLD), (40, SETTLE + 2), ("cloud", HOLD)]
     home = [(25, HOLD), (2, HOLD), (3, HOLD), ("cloud", HOLD)]

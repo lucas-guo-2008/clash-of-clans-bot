@@ -4,7 +4,8 @@ import pytest
 
 from policy.navigator import (ABORT, DEPLOY, GATE_STABLE_FRAMES, GATE_TIMEOUT, PATIENCE_SECONDS, STALL_SECONDS,
                               STAR_STABLE_FRAMES, TAP, WAIT, battle_stalled, decide, gate_open, star_won)
-from policy.thresholds import MIN_DARK, MIN_ELIXIR, MIN_GOLD, should_attack
+from policy.thresholds import should_attack
+from tests.conftest import MIN_DARK, MIN_ELIXIR, MIN_GOLD  # pinned there, whatever thresholds.py holds
 from vision.loot import LootReading
 from vision.screens import Screen
 
