@@ -4,7 +4,8 @@ drop the army around it -> wait out the battle -> Return Home, ITERATIONS times.
 
   python main.py --dry-run
   python main.py
-  python main.py --show      # live window: screen, scores, buildings, deploy points, next tap
+  python main.py --show      # live window: the screen at ~60 fps under everything the bot found and decided
+  python main.py --no-save   # play without recording the run (no records or frames in templates/scout)
 
 Stops back home after ITERATIONS battles. Prints the buildings detected on each judged base
 (nothing decides on them yet) and logs every judged base to templates/scout/bases.jsonl, with
@@ -19,15 +20,17 @@ import json
 import random
 import subprocess
 import sys
+import threading
 import time
 from collections import Counter
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 
 import cv2
 
 from capture.adb import connect, grab_frame
+from capture.stream import Stream
 from control.tap import tap_match, tap_point
 from policy import thresholds
 from policy.navigator import (ABORT, ARMS, DEPLOY, FULL, GATE_TIMEOUT, PATIENCE_SECONDS, STALL, STALL_SECONDS, STAR,
@@ -54,8 +57,10 @@ SCOUT_DIR = ROOT / "templates" / "scout"
 BASES_LOG = "bases.jsonl"  # in SCOUT_DIR: one JSON record per judged base
 BATTLES_LOG = "battles.jsonl"  # in SCOUT_DIR: one per settled result, pointing at its base
 RUNS_LOG = "runs.jsonl"  # in SCOUT_DIR: one per start, the code and settings every record of that run came from
+RECORDING = True  # False under --no-save: nothing is written to SCOUT_DIR (unknown frames are still kept)
 BATTLE_FRAME_SECONDS = 5.0  # a battle frame is kept this often from the deploy (training data for what got destroyed)
 WINDOW = "bot"
+VIEW_FPS = 30  # the --show window's refresh cap; the video arrives at up to 60, findings at ~3.6
 
 ITERATIONS = 40
 rng = random.Random()  # draws each battle's arm; the tests seed their own
@@ -69,7 +74,7 @@ EVENT = False
 #   troop: tap the card, then `count` drops cycling the deploy points
 #   hero:  tap the card, one drop; the ability fires HERO_ABILITY_DELAY s later (card tapped again)
 #   spell: located but not cast -- aiming waits for building detection (Phase 4/5)
-DECK = (("troop", 24), ("skip", 0), ("hero", 1), ("hero", 1), ("hero", 1), ("spell", 11))
+DECK = (("troop", 24), ("hero", 1), ("hero", 1), ("spell", 11))
 HERO_ABILITY_DELAY = 10.0
 MIN_DEPLOY_POINTS = 12  # fewer means the outline was not found (not fully drawn yet, or a dark map skin)
 OUTLINE_SECONDS = 5.0
@@ -132,6 +137,8 @@ def loot_fields(reading: LootReading, key: str) -> dict:
 
 
 def append_record(log: str, record: dict) -> None:
+    if not RECORDING:
+        return
     SCOUT_DIR.mkdir(parents=True, exist_ok=True)
     with (SCOUT_DIR / log).open("a") as f:
         f.write(json.dumps(record) + "\n")
@@ -140,6 +147,8 @@ def append_record(log: str, record: dict) -> None:
 def save_png(frame, name: str) -> str:
     """Keep a frame in SCOUT_DIR, lossless: models train on what the bot sees live."""
 
+    if not RECORDING:
+        return name
     SCOUT_DIR.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(SCOUT_DIR / name), frame, [cv2.IMWRITE_PNG_COMPRESSION, 1])
     return name
@@ -251,72 +260,150 @@ def save_battle(frame, run_id: str, result: LootReading, base_id: str | None, ba
     })
 
 
-def show(
-    frame,
-    step: int,
-    screen: Screen,
-    action: Action,
-    peaks: dict[str, Match],
-    reading: LootReading | None,
-    slots: list[Match],
-    points: list[DeployPoint],
-    buildings: list[Building] | None,
-    tap: tuple[int, int] | None,
-    unknown_seconds: float,
-    battles: int,
-) -> None:
-    """Draw everything the bot found and decided this step, and put it in the window."""
+@dataclass(frozen=True)
+class Findings:
+    """What the bot found and decided in one step, for the --show window."""
+
+    step: int
+    screen: Screen
+    action: Action
+    peaks: dict[str, Match]
+    reading: LootReading | None
+    slots: list[Match]  # deck cards: on the scout screen, and in battle under --show
+    spent: list[bool]  # per slot, in battle: the card is greyed out
+    points: list[DeployPoint]
+    buildings: list[Building] | None
+    tap: tuple[int, int] | None
+    unknown_seconds: float
+    battles: int
+    lines: object  # the deploy outline found on the bot's frame (np.ndarray), None off the scout screen
+    arm: str | None  # this battle's stop rule, once the army is down
+    trace: list[list]  # this battle's Available Loot trace, a copy
+    looted: tuple[int, int, int]  # the run so far
+    minutes: float  # since the run started
+
+
+def render(frame, f: Findings):
+    """Everything the bot found and decided in one step, drawn over `frame` (the live video, or the
+    bot's own frame)."""
 
     image = frame.copy()
-    if screen is Screen.SCOUT:
-        draw_buildings(image, buildings or [])
-        labels = [(slot, f"{slot.label} {kind} x{count}") for slot, (kind, count) in zip(slots, DECK)]
-        draw_deploy(image, outline_lines(outline_mask(frame)), points, labels)
-    draw_anchors(image, peaks, THRESHOLD)
-    if tap is not None:
-        draw_tap(image, tap)
+    if f.screen is Screen.SCOUT:
+        draw_buildings(image, f.buildings or [])
+    spent = f.spent or [False] * len(f.slots)
+    labels = [(slot, "spent", GREY) if gone else (slot, f"{kind} x{count}", GREEN)
+              for slot, (kind, count), gone in zip(f.slots, DECK, spent)]
+    draw_deploy(image, f.lines, f.points, labels)
+    draw_anchors(image, f.peaks, THRESHOLD)
+    if f.tap is not None:
+        draw_tap(image, f.tap)
 
-    target = f" {action.anchor}" if action.anchor else ""
-    status = [(f"battles {battles}/{ITERATIONS}", WHITE)]
-    if screen is Screen.UNKNOWN:
-        status.append((f"unknown {unknown_seconds:.0f}/{PATIENCE_SECONDS:.0f} s", RED))
-    if reading is not None:
-        status.append((describe_loot(reading), GREEN if reading.ok else RED))
-    if screen is Screen.SCOUT:
-        status.append((f"{len(points)} deploy points, {len(slots)}/{len(DECK)} cards", CYAN))
-        if buildings is not None:
-            status.append((f"{len(buildings)} buildings", YELLOW))
+    target = f" {f.action.anchor}" if f.action.anchor else ""
+    total = f.looted[0] + f.looted[1]
+    rate = f", {total / 1e6 / (f.minutes / 60):.1f} M/h" if f.minutes > 0 else ""
+    status = [(f"battles {f.battles}/{ITERATIONS}", WHITE), (f"run {total / 1e6:.2f}M gold+elixir{rate}", WHITE)]
+    if f.arm is not None:
+        status.append((f"arm {f.arm}", CYAN))
+    if f.screen is Screen.UNKNOWN:
+        status.append((f"unknown {f.unknown_seconds:.0f}/{PATIENCE_SECONDS:.0f} s", RED))
+    if f.reading is not None:
+        status.append((describe_loot(f.reading), GREEN if f.reading.ok else RED))
+    if f.screen is Screen.SCOUT:
+        status.append((f"{len(f.points)} deploy points, {len(f.slots)}/{len(DECK)} cards", CYAN))
+        if f.buildings is not None:
+            status.append((f"{len(f.buildings)} buildings", YELLOW))
 
     rows = [
-        [(f"step {step}", WHITE), (screen.value.upper(), RED if screen is Screen.UNKNOWN else GREEN),
-         (f"-> {action.kind}{target}  ({action.why})", WHITE)],
+        [(f"step {f.step}", WHITE), (f.screen.value.upper(), RED if f.screen is Screen.UNKNOWN else GREEN),
+         (f"-> {f.action.kind}{target}  ({f.action.why})", WHITE)],
         [(f"{label} {m.score:.3f}", GREEN if m.score >= THRESHOLD else GREY)
-         for label, m in sorted(peaks.items(), key=lambda kv: -kv[1].score)],
+         for label, m in sorted(f.peaks.items(), key=lambda kv: -kv[1].score)],
         status,
     ]
-    cv2.imshow(WINDOW, with_header(image, rows))
+    return with_header(image, rows, f.trace if f.screen is Screen.BATTLE else None)
 
 
-def window_alive() -> bool:
-    """Let the window repaint; False means q or Esc was pressed."""
+class Viewer:
+    """The --show window. macOS draws windows only from the main thread, so under --show the bot runs on
+    a worker thread and hands over each step's frame and findings; the window redraws the latest findings
+    on every frame of the live video. Findings update at the bot's rate (~3.6 fps), so on a pan the boxes
+    trail the picture by up to ~0.3 s."""
 
-    return cv2.waitKey(1) & 0xFF not in (ord("q"), 27)
+    def __init__(self) -> None:
+        self.published = None  # (bot's frame, Findings) of the latest step
+        self.stopped = threading.Event()  # q or Esc: the bot stops after its current step
+
+    def publish(self, frame, findings: Findings) -> None:
+        self.published = (frame, findings)  # one assignment: the window never sees half a step
+
+    def run(self, bot: threading.Thread, hold: bool) -> None:
+        """Show until the bot ends, or until a key once it has, with `hold` (a dry run)."""
+
+        cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(WINDOW, 960, 600)  # points: on a Retina screen the full-size image shows 1:1 at this size
+        stream = Stream()
+        shown, shown_at = (None, None), 0.0
+        try:
+            while bot.is_alive() or hold:
+                published, video = self.published, stream.latest
+                due = time.monotonic() - shown_at >= 1 / VIEW_FPS
+                if published is not None and due and (published is not shown[0] or video is not shown[1]):
+                    frame, findings = published
+                    if video is not None and video.shape != frame.shape:
+                        video = cv2.resize(video, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_LINEAR)
+                    # The full-size image, scaled to the window by macOS: OpenCV cannot read a macOS window's
+                    # size (getWindowImageRect reports the last image's), and a smaller image went blurry.
+                    cv2.imshow(WINDOW, render(frame if video is None else video, findings))
+                    shown, shown_at = (published, stream.latest), time.monotonic()
+                key = cv2.waitKey(1) & 0xFF
+                if key in (ord("q"), 27):
+                    self.stopped.set()
+                    return
+                if hold and not bot.is_alive() and key != 255:
+                    return
+        finally:
+            stream.close()
+            cv2.destroyAllWindows()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dry-run", action="store_true", help="classify one screen and report, but do not tap")
     parser.add_argument("--show", action="store_true", help="show what the bot sees and decides, live")
+    parser.add_argument("--no-save", action="store_true",
+                        help="record nothing in templates/scout (runs, bases, battles and their frames)")
     args = parser.parse_args()
+    global RECORDING
+    RECORDING = not args.no_save
 
     buttons = load_button_templates()
     digits = load_digit_templates()
     result_digits = load_result_templates()
     detector = load_detector()
     device = connect()
-    if args.show:
-        cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(WINDOW, 960, 600)
+    if not args.show:
+        return farm(args, device, buttons, digits, result_digits, detector, None)
+
+    view = Viewer()
+    outcome = []
+
+    def bot() -> None:
+        try:
+            outcome.append(farm(args, device, buttons, digits, result_digits, detector, view))
+        except BaseException as error:  # handed to the main thread, which raises it
+            outcome.append(error)
+
+    worker = threading.Thread(target=bot, daemon=True)
+    worker.start()
+    view.run(worker, hold=args.dry_run)
+    worker.join()
+    if isinstance(outcome[0], BaseException):
+        raise outcome[0]
+    return outcome[0]
+
+
+def farm(args, device, buttons, digits, result_digits, detector, view: Viewer | None) -> int:
+    """The bot's loop, until it is done (0), gives up (1), or the window is closed (0)."""
 
     unknown_since = None
     unknown_saved = False  # this unrecognized stretch already has a frame in UNKNOWN_DIR
@@ -502,14 +589,19 @@ def main() -> int:
         elif action.kind == DEPLOY and slots and points:
             tap = slots[0].centre
 
-        if args.show:
-            show(frame, step, screen, action, peaks, reading, slots, points, buildings, tap, unknown_seconds, battles)
+        if view is not None:
+            lines = outline_lines(outline_mask(frame)) if screen is Screen.SCOUT else None
+            spent = []
+            if screen is Screen.BATTLE:
+                slots = deck_slots(frame)
+                spent = [kind == "troop" and card_spent(frame, slot) for slot, (kind, _) in zip(slots, DECK)]
+            view.publish(frame, Findings(step, screen, action, peaks, reading, slots, spent, points, buildings, tap,
+                                         unknown_seconds, battles, lines, arm, list(trace), looted,
+                                         (clock() - started) / 60))
 
         if args.dry_run:
             if tap is not None:
                 print(f"        would tap {action.anchor or 'card'} at {tap}")
-            if args.show:
-                cv2.waitKey(0)
             return 0
 
         if action.kind == ABORT:
@@ -564,7 +656,7 @@ def main() -> int:
         if screen is Screen.RESULT:
             heroes, troops = [], []
 
-        if args.show and not window_alive():
+        if view is not None and view.stopped.is_set():
             print("\nstopped from the window")
             return 0
 

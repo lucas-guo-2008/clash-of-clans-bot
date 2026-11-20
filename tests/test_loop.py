@@ -54,7 +54,7 @@ def run(frame, unknown_frame, monkeypatch, tmp_path):
     monkeypatch.setattr(main, "detect_buildings", lambda frame, model: [])
     monkeypatch.setattr(main, "save_unknown", lambda _: main.ROOT / "not-saved-in-tests.png")
 
-    def play(sequence):
+    def play(sequence, flags=()):
         cache = {}
 
         def load(s):
@@ -80,7 +80,7 @@ def run(frame, unknown_frame, monkeypatch, tmp_path):
         monkeypatch.setattr(main, "grab_frame", grab)
         monkeypatch.setattr(main, "clock", lambda: count[0] * STEP)
         monkeypatch.setattr(main, "SCOUT_DIR", tmp_path / "scout")
-        monkeypatch.setattr(sys, "argv", ["main.py"])
+        monkeypatch.setattr(sys, "argv", ["main.py", *flags])
         try:
             return main.main(), device.taps
         except OutOfFrames:
@@ -236,6 +236,13 @@ def test_each_judged_base_is_logged_once_and_only_attacked_frames_kept(run, fram
     assert str(loot.gold) not in lines[0] and str(loot.gold) in lines[1]
     assert sorted(p.name for p in scout.glob("*.png")) == sorted(r["frame"] for r in records)  # skipped ones too
     assert len({r["id"] for r in records}) == 2
+
+
+def test_no_save_records_nothing(run, tmp_path):
+    code, _ = run([(SCOUT_AT, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 25], flags=["--no-save"])
+
+    assert code == 0  # a whole battle, and back home
+    assert not (tmp_path / "scout").exists()
 
 
 def read_log(tmp_path, log):
