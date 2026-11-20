@@ -26,6 +26,10 @@ END_WHY = {STAR: "first star won, end the battle", STALL: "loot has stopped comi
 # battles; (STAR, STALL) randomizes per battle again for another comparison.
 ARMS = (STAR,)
 
+# Taps the gate does not hold: the crate takes several taps on one screen, and its last pin darkens
+# on the last one it needs, so the screen itself says when to stop.
+UNGATED = frozenset({"crate"})
+
 TAP = "tap"
 WAIT = "wait"
 DEPLOY = "deploy"
@@ -43,7 +47,8 @@ def decide(screen: Screen, reading: LootReading | None, unknown_seconds: float,
            end_with: str | None = None, end_rule: str = STALL, nexts: int = 0) -> Action:
     """Given a screen, the loot showing on it, and how long we have
     been lost, return an action. `end_with` is the button
-    that ends this battle (End Battle or Surrender), once main.py has judged it over by `end_rule`.
+    that ends this battle (End Battle or Surrender), once main.py has judged it over by `end_rule`, or
+    on a result screen the one that leaves it (Return Home, or Claim Reward when a crate was earned).
     `nexts` is how many bases this search has skipped in a row."""
 
     if screen is Screen.HOME:
@@ -75,7 +80,18 @@ def decide(screen: Screen, reading: LootReading | None, unknown_seconds: float,
     if screen is Screen.RESULT:
         if reading is None:
             return Action(WAIT, why="waiting for the loot count-up to settle")
+        if end_with == "claim-reward":
+            return Action(TAP, end_with, "battle over, claim the reward crate")
         return Action(TAP, "return-home", "battle over, return home")
+
+    if screen is Screen.CRATE:
+        return Action(TAP, "crate", "open the reward crate")
+
+    if screen is Screen.REWARD:
+        return Action(TAP, "continue", "reward shown, continue")
+
+    if screen is Screen.STAR_BONUS:
+        return Action(TAP, "claim", "claim the star bonus")
 
     if unknown_seconds < PATIENCE_SECONDS:
         waited = f"{unknown_seconds:.0f}/{PATIENCE_SECONDS:.0f} s"

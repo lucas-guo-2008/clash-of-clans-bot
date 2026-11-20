@@ -34,20 +34,22 @@ from capture.stream import Stream
 from control.tap import tap_match, tap_point
 from policy import thresholds
 from policy.navigator import (ABORT, ARMS, DEPLOY, FULL, GATE_TIMEOUT, PATIENCE_SECONDS, STALL, STALL_SECONDS, STAR,
-                              TAP, WAIT, Action, battle_stalled, decide, gate_open, star_won)
+                              TAP, UNGATED, WAIT, Action, battle_stalled, decide, gate_open, star_won)
 from vision.anchors import THRESHOLD, Match, peak_scores
 from vision.buildings import MODEL_PATH, Building, detect_buildings, load_detector
 from vision.buttons import load_button_templates
 from vision.deploy import DeployPoint, card_spent, deck_slots, deploy_points, outline_lines, outline_mask
 from vision.glyphs import load_digit_templates
 from vision.loot import LootReading, read_loot
-from vision.overlay import (CYAN, GREEN, GREY, RED, WHITE, YELLOW, draw_anchors, draw_buildings, draw_deploy,
-                            draw_tap, with_header)
+from vision.overlay import (CYAN, GREEN, GREY, MAGENTA, ORANGE, PINK, PURPLE, RED, WHITE, YELLOW, draw_anchors,
+                            draw_buildings, draw_deploy, draw_tap, with_header)
 from vision.result import load_result_templates, read_result
 from vision.screens import Screen, classify
 
 ROOT = Path(__file__).resolve().parent
 RESULT_SETTLE_SECONDS = 1.0  # "You got" must read the same for this long before it counts
+HOME_SETTLE_SECONDS = 2.0  # home must hold this long before Battle is tapped: a reward crate pops up over it
+# ~0.5 s after home appears (live 2026-11-20), and tapping Battle first left the crate unopened
 SCOUT_SETTLE_SECONDS = 0.6  # a readable loot panel must hold this long before the base is judged
 SCOUT_UNREADABLE_SECONDS = 2.0  # an unreadable panel is skipped only this long after the base appeared
 UNKNOWN_SAVE_SECONDS = 5.0  # an unrecognized stretch is saved only once it outlasts a cloud (live: under 1 s)
@@ -74,7 +76,7 @@ EVENT = False
 #   troop: tap the card, then `count` drops cycling the deploy points
 #   hero:  tap the card, one drop; the ability fires HERO_ABILITY_DELAY s later (card tapped again)
 #   spell: located but not cast -- aiming waits for building detection (Phase 4/5)
-DECK = (("troop", 24), ("hero", 1), ("hero", 1), ("spell", 11))
+DECK = (("troop", 24), ("skip", 1), ("hero", 1), ("spell", 11), ("skip", 1))
 HERO_ABILITY_DELAY = 10.0
 MIN_DEPLOY_POINTS = 12  # fewer means the outline was not found (not fully drawn yet, or a dark map skin)
 OUTLINE_SECONDS = 5.0
@@ -271,16 +273,77 @@ class Findings:
     reading: LootReading | None
     slots: list[Match]  # deck cards: on the scout screen, and in battle under --show
     spent: list[bool]  # per slot, in battle: the card is greyed out
-    points: list[DeployPoint]
-    buildings: list[Building] | None
+    points: list[DeployPoint]  # in battle: the points the army went down on
+    buildings: list[Building] | None  # in battle: the attacked base's, found on its scout frame
     tap: tuple[int, int] | None
     unknown_seconds: float
     battles: int
-    lines: object  # the deploy outline found on the bot's frame (np.ndarray), None off the scout screen
+    lines: object  # the deploy outline (np.ndarray); in battle the scout frame's, so it trails a pan
     arm: str | None  # this battle's stop rule, once the army is down
     trace: list[list]  # this battle's Available Loot trace, a copy
     looted: tuple[int, int, int]  # the run so far
     minutes: float  # since the run started
+    nexts: int = 0  # bases skipped in a row
+    searches: int = 0  # Find a Match and Next taps this run
+    since_drop: float | None = None  # seconds since the army went down, in battle
+
+
+SCREEN_NAMES = {
+    Screen.HOME: "Home village", Screen.ATTACK_MENU: "Attack menu", Screen.ARMY: "Army",
+    Screen.SCOUT: "Scouting a base", Screen.BATTLE: "Battle", Screen.RESULT: "Battle result",
+    Screen.END_CONFIRM: "Ending the battle", Screen.CRATE: "Reward crate", Screen.REWARD: "Reward",
+    Screen.STAR_BONUS: "Star bonus", Screen.UNKNOWN: "Unrecognized screen",
+}
+STOP_RULES = {STAR: "at the first star", STALL: f"when loot stops for {STALL_SECONDS:.0f} s", FULL: "never (full battle)"}
+
+
+def situation(f: Findings) -> list[tuple[str, tuple]]:
+    """The header's second row: what this screen means, in words."""
+
+    if f.screen is Screen.SCOUT and f.reading is not None:
+        if not f.reading.ok:
+            return [("loot panel unreadable, skipping soon", RED)]
+        total = f.reading.gold + f.reading.elixir
+        clears = total >= thresholds.MIN_TOTAL
+        row = [(f"gold {f.reading.gold:,}", YELLOW), (f"elixir {f.reading.elixir:,}", PINK),
+               (f"dark {f.reading.dark_elixir:,}", PURPLE),
+               (f"gold+elixir {total / 1e6:.2f}M, {'clears' if clears else 'under'} the "
+                f"{thresholds.MIN_TOTAL / 1e6:.1f}M bar", GREEN if clears else RED)]
+        if f.nexts:
+            row.append((f"skipped {f.nexts} in a row (attacks anyway after {thresholds.MAX_NEXTS})", GREY))
+        return row
+    if f.screen in (Screen.BATTLE, Screen.END_CONFIRM) and f.trace:
+        shown = f.trace[0][1] + f.trace[0][2]
+        taken = shown - f.trace[-1][1] - f.trace[-1][2]
+        row = [(f"taken {taken / 1e6:.2f}M of {shown / 1e6:.2f}M", GREEN)]
+        if f.since_drop is not None:
+            row.append((f"{f.since_drop:.0f} s since the drop", WHITE))
+        if f.arm is not None:
+            row.append((f"ends {STOP_RULES[f.arm]}", CYAN))
+        troops = [gone for gone, (kind, _) in zip(f.spent, DECK) if kind == "troop"]
+        if troops:
+            row.append((f"troop cards used up {sum(troops)}/{len(troops)}", GREY))
+        return row
+    if f.screen is Screen.UNKNOWN:
+        return [(f"no known buttons for {f.unknown_seconds:.0f} s; gives up at {PATIENCE_SECONDS:.0f} s "
+                 "(clouds between screens clear on their own)", RED)]
+    return []
+
+
+def legend(f: Findings) -> list[tuple[str, tuple]]:
+    """The header's last row: what each colour on the picture is, with counts where they help."""
+
+    row = [("buttons", GREEN)]
+    if f.lines is not None or f.points:
+        row += [("no-deploy line", MAGENTA), (f"{len(f.points)} drop points", CYAN)]
+    if f.slots:
+        row.append((f"{len(f.slots)} cards", GREEN))
+    if f.buildings is not None:
+        row += [(f"{len(f.buildings)} buildings:", WHITE), ("gold", YELLOW), ("elixir", PINK), ("dark", PURPLE),
+                ("town hall", ORANGE), ("clan castle", WHITE)]
+    if f.tap is not None:
+        row.append(("next tap", RED))
+    return row
 
 
 def render(frame, f: Findings):
@@ -288,8 +351,7 @@ def render(frame, f: Findings):
     bot's own frame)."""
 
     image = frame.copy()
-    if f.screen is Screen.SCOUT:
-        draw_buildings(image, f.buildings or [])
+    draw_buildings(image, f.buildings or [])
     spent = f.spent or [False] * len(f.slots)
     labels = [(slot, "spent", GREY) if gone else (slot, f"{kind} x{count}", GREEN)
               for slot, (kind, count), gone in zip(f.slots, DECK, spent)]
@@ -298,29 +360,22 @@ def render(frame, f: Findings):
     if f.tap is not None:
         draw_tap(image, f.tap)
 
-    target = f" {f.action.anchor}" if f.action.anchor else ""
+    doing = {DEPLOY: "attack: ", ABORT: "give up: "}.get(f.action.kind, "")
     total = f.looted[0] + f.looted[1]
-    rate = f", {total / 1e6 / (f.minutes / 60):.1f} M/h" if f.minutes > 0 else ""
-    status = [(f"battles {f.battles}/{ITERATIONS}", WHITE), (f"run {total / 1e6:.2f}M gold+elixir{rate}", WHITE)]
-    if f.arm is not None:
-        status.append((f"arm {f.arm}", CYAN))
-    if f.screen is Screen.UNKNOWN:
-        status.append((f"unknown {f.unknown_seconds:.0f}/{PATIENCE_SECONDS:.0f} s", RED))
-    if f.reading is not None:
-        status.append((describe_loot(f.reading), GREEN if f.reading.ok else RED))
-    if f.screen is Screen.SCOUT:
-        status.append((f"{len(f.points)} deploy points, {len(f.slots)}/{len(DECK)} cards", CYAN))
-        if f.buildings is not None:
-            status.append((f"{len(f.buildings)} buildings", YELLOW))
+    run = [(f"run {f.minutes:.0f} min", WHITE), (f"battles {f.battles} of {ITERATIONS}", WHITE),
+           (f"looted {total / 1e6:.2f}M gold+elixir", GREEN)]
+    if f.minutes >= 1:
+        run.append((f"{total / 1e6 / (f.minutes / 60):.1f}M per hour", GREEN))
+    run.append((f"{f.searches} searches", GREY))
 
     rows = [
-        [(f"step {f.step}", WHITE), (f.screen.value.upper(), RED if f.screen is Screen.UNKNOWN else GREEN),
-         (f"-> {f.action.kind}{target}  ({f.action.why})", WHITE)],
-        [(f"{label} {m.score:.3f}", GREEN if m.score >= THRESHOLD else GREY)
-         for label, m in sorted(f.peaks.items(), key=lambda kv: -kv[1].score)],
-        status,
+        [(SCREEN_NAMES[f.screen].upper(), RED if f.screen is Screen.UNKNOWN else GREEN),
+         (f"-> {doing}{f.action.why}", WHITE)],
+        situation(f),
+        run,
+        legend(f),
     ]
-    return with_header(image, rows, f.trace if f.screen is Screen.BATTLE else None)
+    return with_header(image, rows, f.trace if f.screen in (Screen.BATTLE, Screen.END_CONFIRM) else None)
 
 
 class Viewer:
@@ -439,7 +494,9 @@ def farm(args, device, buttons, digits, result_digits, detector, view: Viewer | 
     started = clock()
     tapped_on, tapped_at = None, 0.0  # the screen of the last gated tap, and when
     last_screen, frames_on_screen = None, 0
+    screen_since = 0.0  # when the screen on show appeared
     last_logged = None
+    attacked_view = None  # --show: (outline, deploy points, buildings) of the base under attack
 
     for step in itertools.count(1):
         frame = grab_frame(device)
@@ -468,6 +525,8 @@ def farm(args, device, buttons, digits, result_digits, detector, view: Viewer | 
         last_screen = screen
 
         now = clock()
+        if frames_on_screen == 1:
+            screen_since = now
         if screen is Screen.UNKNOWN:
             unknown_since = now if unknown_since is None else unknown_since
         else:
@@ -524,6 +583,8 @@ def farm(args, device, buttons, digits, result_digits, detector, view: Viewer | 
                 end_with, end_rule = "end-battle", STAR
             elif battle_stalled(trace, now - deployed_at):
                 end_with = "end-battle" if "end-battle" in matches else "surrender"  # End Battle once a star is won
+        if screen is Screen.RESULT and "claim-reward" in matches:
+            end_with = "claim-reward"
 
         action = decide(screen, settled if screen is Screen.RESULT else scout_settled, unknown_seconds, end_with,
                         end_rule, nexts)
@@ -537,13 +598,15 @@ def farm(args, device, buttons, digits, result_digits, detector, view: Viewer | 
 
         if tapped_on is not None and gate_open(screen, tapped_on, now - tapped_at, frames_on_screen):
             tapped_on = None
-        if tapped_on is not None and action.kind in (TAP, DEPLOY):
+        if tapped_on is not None and action.kind in (TAP, DEPLOY) and action.anchor not in UNGATED:
             waited = f"{now - tapped_at:.1f}/{GATE_TIMEOUT:.0f} s"
             action = Action(WAIT, why=f"holding until the screen changes after the last tap ({waited})")
 
         slots, points = [], []
         if screen is Screen.SCOUT and (args.show or action.kind == DEPLOY):
             slots, points = deck_slots(frame), deploy_points(frame)
+        if screen is Screen.HOME and action.kind == TAP and now - screen_since < HOME_SETTLE_SECONDS:
+            action = Action(WAIT, why=f"home for {now - screen_since:.1f}/{HOME_SETTLE_SECONDS:.0f} s, in case a reward crate pops up")
         # The outline is not always fully drawn, and on a dark map skin not found at all. Drops inside the red
         # zone are refused, so wait for a better frame rather than guess, then give up on the base.
         if action.kind == DEPLOY and len(points) < MIN_DEPLOY_POINTS:
@@ -570,7 +633,7 @@ def farm(args, device, buttons, digits, result_digits, detector, view: Viewer | 
                         arm, ended_by, end_tap, battle_frames, final, deployed, redeployed)
             attacked_id, deployed_at, trace, ended_by, deployed, redeployed = None, None, [], None, [], []
             arm, end_tap = None, None
-            surrender_seen = False
+            surrender_seen, attacked_view = False, None
             battle_frames, last_battle = [], None
 
         # One frame per unrecognized stretch that outlasts a cloud, plus the one it gives up on
@@ -591,13 +654,20 @@ def farm(args, device, buttons, digits, result_digits, detector, view: Viewer | 
 
         if view is not None:
             lines = outline_lines(outline_mask(frame)) if screen is Screen.SCOUT else None
-            spent = []
+            shown_points, shown_buildings, spent = points, buildings, []
+            if action.kind == DEPLOY and points:
+                attacked_view = (lines, points, buildings)  # drawn over the battle that follows
+            if screen in (Screen.BATTLE, Screen.END_CONFIRM) and attacked_view is not None:
+                lines, shown_points, _ = attacked_view
+            if screen is Screen.BATTLE:  # detected again each step, so a destroyed building's box goes (~18 ms)
+                shown_buildings = detect_buildings(frame, detector)
             if screen is Screen.BATTLE:
                 slots = deck_slots(frame)
                 spent = [kind == "troop" and card_spent(frame, slot) for slot, (kind, _) in zip(slots, DECK)]
-            view.publish(frame, Findings(step, screen, action, peaks, reading, slots, spent, points, buildings, tap,
-                                         unknown_seconds, battles, lines, arm, list(trace), looted,
-                                         (clock() - started) / 60))
+            view.publish(frame, Findings(step, screen, action, peaks, reading, slots, spent, shown_points,
+                                         shown_buildings, tap, unknown_seconds, battles, lines, arm, list(trace),
+                                         looted, (clock() - started) / 60, nexts, searches,
+                                         None if deployed_at is None else clock() - deployed_at))
 
         if args.dry_run:
             if tap is not None:
@@ -610,7 +680,8 @@ def farm(args, device, buttons, digits, result_digits, detector, view: Viewer | 
 
         if action.kind == TAP:
             tap_match(device, matches[action.anchor])
-            tapped_on, tapped_at = screen, clock()
+            if action.anchor not in UNGATED:
+                tapped_on, tapped_at = screen, clock()
             if action.anchor in ("find-match", "next-button"):
                 searches += 1
             if action.anchor == "next-button":

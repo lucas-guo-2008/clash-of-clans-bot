@@ -18,6 +18,13 @@ BUTTON_AT = {
     "surrender": (50, 788),
     "return-home": (895, 895),
     "okay": (1099, 672),  # "Okay" lettering on the End Battle? confirmation (frame 39)
+    # Reward screens, 2026-11-20. Worst score on any other saved frame (1,567 checked) in brackets.
+    "claim-reward": (870, 908),  # "Claim Reward" lettering where Return Home sits, on the result
+    # screen after the day's star bonus progress earns a crate (unknown_20261116_211314) [0.407]
+    "crate": (1050, 868),  # the rightmost rolling pin under a reward crate (frame 48); it turns
+    # dark on the last tap the crate needs [0.485]
+    "continue": (835, 900),  # "Continue" lettering under an opened crate's reward (frame 52) [0.387]
+    "claim": (942, 825),  # "Claim" lettering on the Star Bonus Received! popup (frame 53) [0.411]
 }
 SEARCH_MARGIN = 40
 

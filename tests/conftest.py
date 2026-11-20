@@ -35,6 +35,7 @@ def pinned_settings(monkeypatch):
     monkeypatch.setattr(main, "DECK", DECK)
     monkeypatch.setattr(main, "ITERATIONS", 1)
     monkeypatch.setattr(main, "ARMS", (STAR,))
+    monkeypatch.setattr(main, "HOME_SETTLE_SECONDS", 0.0)  # the sequences predate it; test_loop checks it on its own
 
 
 def _load(path: Path):

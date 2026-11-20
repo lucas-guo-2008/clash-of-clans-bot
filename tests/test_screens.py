@@ -17,6 +17,10 @@ SCREENS = {
     38: "battle",  # revamped battle, army spent: the button reads End Battle again, not Surrender
     39: "end_confirm",  # End Battle? modal over frame 38; end-battle still 1.000 behind the dimming
     40: "result",  # after Okay
+    # Reward screens, 2026-11-20: the 2-star crate (48: untapped, 49-51: 1-3 pins dark), what it held (52),
+    # the Star Bonus popup over home (53; battle scores 1.000 behind it), the 5-star crate (54) and its reward (55)
+    **{n: "crate" for n in (48, 49, 50, 51, 54)},
+    52: "reward", 53: "star_bonus", 55: "reward",
 }
 
 UNRECOGNIZED = [
@@ -25,6 +29,10 @@ UNRECOGNIZED = [
     ("unknown_20260919_005548_874261.png", "unknown"),
     ("unknown_20260919_005553_346372.png", "battle"),  # scout fading into clouds; waiting is right
     ("unknown_20260919_005725_732450.png", "unknown"),
+    ("unknown_20261116_211314_194623.png", "result"),  # Claim Reward where Return Home sits (run 1 stopped here)
+    ("unknown_20261116_211329_173888.png", "result"),
+    ("unknown_20261116_214340_253710.png", "crate"),  # the crate that stopped run 2
+    ("unknown_20261116_214355_239508.png", "crate"),
     pytest.param(
         "unknown_20260930_222752_292758.png", "unknown",
         marks=pytest.mark.xfail(strict=True, reason=(

@@ -26,6 +26,12 @@ OKAY = (1166, 692)  # centre of the okay match on the End Battle? popup
 SURRENDER = (139, 804)  # centre of the surrender match
 SURRENDER_AT = 44  # a battle before the first star, the troop card spent; frame 38 is one after it
 
+CLAIM_REWARD = (986, 926)  # centre of the claim-reward match, on a result screen that earned a crate
+CRATE = (1077, 904)  # centre of the crate's last rolling pin
+CONTINUE = (943, 920)  # centre of the continue match under a crate's reward
+CLAIM = (993, 846)  # centre of the claim match on the Star Bonus popup
+CLAIM_RESULT = "unknown_20261116_211314_194623.png"
+
 STEP = 0.2
 HOLD = GATE_STABLE_FRAMES + 1
 SETTLE = math.ceil(main.RESULT_SETTLE_SECONDS / STEP) + 1
@@ -243,6 +249,51 @@ def test_no_save_records_nothing(run, tmp_path):
 
     assert code == 0  # a whole battle, and back home
     assert not (tmp_path / "scout").exists()
+
+
+def test_show_keeps_the_attacked_base_drawn_through_its_battle(run, frame, monkeypatch):
+    published = []
+    monkeypatch.setattr(main.Viewer, "publish", lambda self, frame, findings: published.append(findings))
+    monkeypatch.setattr(main.Viewer, "run", lambda self, bot, hold: bot.join())
+    code, _ = run([(SCOUT_AT, SCOUT), (7, HOLD), (8, SETTLE + 2), ("cloud", HOLD), 25], flags=["--show"])
+
+    assert code == 0
+    battle = [f for f in published if f.screen is main.Screen.BATTLE]
+    after = [f for f in published if f.screen in (main.Screen.RESULT, main.Screen.HOME)]
+    assert battle and after
+    points = deploy_points(frame(SCOUT_AT))
+    assert all(f.points == points and f.lines is not None and f.buildings == [] for f in battle)  # [] from the fake detector
+    assert all(not f.points and f.lines is None and f.buildings is None and not f.slots for f in after)
+
+
+def test_battle_that_earns_a_crate_claims_opens_and_continues(run, frame, unknown_frame, tmp_path):
+    # Run 1 of 2026-11-16 stopped on this result screen. "You got" is still read and logged; then
+    # Claim Reward, a tap on every crate frame (ungated: the crate stays on screen until its last pin
+    # darkens), and Continue, which goes home.
+    claim_result = unknown_frame(CLAIM_RESULT)
+    crate = [(n, 2) for n in (48, 49, 50, 51)]
+    code, taps = run([(SCOUT_AT, SCOUT), (7, HOLD), (claim_result, SETTLE + 2), ("cloud", HOLD), *crate,
+                      (52, HOLD), 25])
+    deploy = expected_deploy(frame(SCOUT_AT))
+    [battle] = read_log(tmp_path, main.BATTLES_LOG)
+
+    assert code == 0
+    assert taps[len(deploy) :] == [CLAIM_REWARD, *[CRATE] * 8, CONTINUE]
+    assert (battle["got"]["gold"], battle["got"]["elixir"]) == (60180, 101859)
+
+
+def test_star_bonus_is_claimed_before_anything_on_home(run):
+    # The popup covers home, where Battle still scores 1.000: tapping it there would go nowhere.
+    _, taps = run([(53, HOLD), (54, 2), (55, HOLD), (25, HOLD)])
+    assert taps == [CLAIM, CRATE, CRATE, CONTINUE, BATTLE]
+
+
+def test_home_holds_before_battle_so_a_crate_can_appear(run, monkeypatch):
+    monkeypatch.setattr(main, "HOME_SETTLE_SECONDS", 2.0)
+    hold = math.ceil(2.0 / STEP)
+    _, early = run([(25, hold - 1)])
+    _, held = run([(25, hold + 1)])
+    assert early == [] and held == [BATTLE]
 
 
 def read_log(tmp_path, log):
