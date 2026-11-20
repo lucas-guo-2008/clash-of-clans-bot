@@ -1,0 +1,39 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: System libraries for OpenCV
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
+
+      # The CPU build of torch: the default Linux wheel pulls ~2.5 GB of CUDA libraries the tests never use
+      - name: Install dependencies
+        run: |
+          pip install torch==2.15.0 torchvision==0.29.2 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      # The saved frames live in a release asset (tools/frames.py), not in git
+      - uses: actions/cache@v4
+        with:
+          path: |
+            templates/initial_collection
+            templates/unknown
+          key: frames-${{ hashFiles('tests/frames.txt') }}
+
+      - name: Fetch the saved frames
+        run: python -m tools.frames fetch
+
+      - name: Run the tests
+        run: python -m pytest -q

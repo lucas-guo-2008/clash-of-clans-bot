@@ -9,6 +9,8 @@ templates/digit_samples
 templates/initial_collection
 templates/unknown
 templates/scout
+# tools/frames.py pack: the test frames, uploaded as a release asset
+frames.zip
 datasets
 runs
 .DS_Store

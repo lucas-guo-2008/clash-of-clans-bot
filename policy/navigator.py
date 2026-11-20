@@ -44,12 +44,13 @@ class Action:
 
 
 def decide(screen: Screen, reading: LootReading | None, unknown_seconds: float,
-           end_with: str | None = None, end_rule: str = STALL, nexts: int = 0) -> Action:
+           end_with: str | None = None, end_rule: str = STALL, nexts: int = 0, unreadable: int = 0) -> Action:
     """Given a screen, the loot showing on it, and how long we have
     been lost, return an action. `end_with` is the button
     that ends this battle (End Battle or Surrender), once main.py has judged it over by `end_rule`, or
     on a result screen the one that leaves it (Return Home, or Claim Reward when a crate was earned).
-    `nexts` is how many bases this search has skipped in a row."""
+    `nexts` is how many bases this search has skipped in a row, `unreadable` how many of the last ones in a
+    row had a loot panel that could not be read."""
 
     if screen is Screen.HOME:
         return Action(TAP, "battle", "open the attack menu")
@@ -67,6 +68,8 @@ def decide(screen: Screen, reading: LootReading | None, unknown_seconds: float,
             return Action(DEPLOY, why="loot clears the threshold")
         if reading.ok and nexts >= thresholds.MAX_NEXTS:
             return Action(DEPLOY, why=f"{nexts} bases skipped in a row, attack this one")
+        if not reading.ok and unreadable >= thresholds.MAX_UNREADABLE:
+            return Action(DEPLOY, why=f"{unreadable} unreadable loot panels in a row (2x cupcake?), attack this one")
         return Action(TAP, "next-button", "spend 900 on the next base")
 
     if screen is Screen.BATTLE:

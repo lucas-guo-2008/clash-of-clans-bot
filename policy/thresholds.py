@@ -13,6 +13,11 @@ MIN_TOTAL = 1_500_000
 # at 39% accepted, 15 skips in a row is a 1-in-1600 event, so hitting it means the threshold is stale.
 MAX_NEXTS = 15
 
+# A loot panel that stays unreadable base after base is a style the reader does not know, not a glitch:
+# a 2x cupcake turns the digits yellow (frames 56-57) and every base reads "no glyphs". After this many
+# unreadable bases in a row the next one is attacked unread. Under a cupcake any base pays double.
+MAX_UNREADABLE = 3
+
 
 def should_attack(reading: LootReading) -> bool:
     """Whether a base's shown loot clears the threshold. An unreadable panel never does."""

@@ -1,6 +1,8 @@
-"""Shared fixtures. Saved frames are local data (gitignored), so a test whose frame is
-missing is skipped, not failed -- a fresh clone runs the pure-logic tests only."""
+"""Shared fixtures. Saved frames are gitignored and published as a release asset
+(`python -m tools.frames fetch`); without them a test that needs one is skipped, except under CI, where
+it fails."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -23,7 +25,7 @@ UNKNOWN = ROOT / "templates" / "unknown"
 
 # What the saved frames were recorded with. main.py and policy/ hold whatever the last live run needed
 # (a data run's zero thresholds, tonight's deck, a demo's full battles); the tests must not depend on it.
-MIN_TOTAL, MAX_NEXTS = 800_000, 15  # shown gold + elixir; frame 24, the base the loop tests attack, clears it
+MIN_TOTAL, MAX_NEXTS, MAX_UNREADABLE = 800_000, 15, 3  # shown gold + elixir; frame 24, the base the loop tests attack, clears it
 DECK = (("troop", 24), ("skip", 0), ("hero", 1), ("hero", 1), ("spell", 11))  # the five cards on frames 9-45
 SIX_CARD_DECK = (("troop", 24), ("skip", 0), ("hero", 1), ("hero", 1), ("hero", 1), ("spell", 11))  # frame 46
 
@@ -32,6 +34,7 @@ SIX_CARD_DECK = (("troop", 24), ("skip", 0), ("hero", 1), ("hero", 1), ("hero", 
 def pinned_settings(monkeypatch):
     monkeypatch.setattr(thresholds, "MIN_TOTAL", MIN_TOTAL)
     monkeypatch.setattr(thresholds, "MAX_NEXTS", MAX_NEXTS)
+    monkeypatch.setattr(thresholds, "MAX_UNREADABLE", MAX_UNREADABLE)
     monkeypatch.setattr(main, "DECK", DECK)
     monkeypatch.setattr(main, "ITERATIONS", 1)
     monkeypatch.setattr(main, "ARMS", (STAR,))
@@ -40,7 +43,9 @@ def pinned_settings(monkeypatch):
 
 def _load(path: Path):
     if not path.exists():
-        pytest.skip(f"{path.name} is not on this machine")
+        if os.environ.get("CI"):  # GitHub Actions: the frames were fetched, so a missing one is an error
+            raise FileNotFoundError(f"{path.name} is not in tests/frames.txt; see tools/frames.py")
+        pytest.skip(f"{path.name} is not on this machine (python -m tools.frames fetch)")
     return cv2.imread(str(path))
 
 

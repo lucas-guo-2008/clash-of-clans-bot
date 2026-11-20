@@ -150,7 +150,7 @@ def test_search_cap_attacks_after_enough_skips_in_a_row(run, frame, monkeypatch,
     assert taps[:2] == [NEXT, NEXT]
     assert as_planned(taps[2 : 2 + len(deploy)], frame(SCOUT_AT)) == deploy
     assert [(b["decision"], b["nexts"]) for b in bases] == [("next", 0), ("next", 1), ("attack", 2)]
-    assert run_record["thresholds"] == {"total": 50_000_000, "max_nexts": 2}
+    assert run_record["thresholds"] == {"total": 50_000_000, "max_nexts": 2, "max_unreadable": 3}
 
 
 def test_six_card_deck_drops_all_three_heroes(run, frame, monkeypatch):
@@ -286,6 +286,22 @@ def test_star_bonus_is_claimed_before_anything_on_home(run):
     # The popup covers home, where Battle still scores 1.000: tapping it there would go nowhere.
     _, taps = run([(53, HOLD), (54, 2), (55, HOLD), (25, HOLD)])
     assert taps == [CLAIM, CRATE, CRATE, CONTINUE, BATTLE]
+
+
+def test_unreadable_panels_in_a_row_attack_the_next_base(run, frame, monkeypatch, tmp_path):
+    # A 2x cupcake turns the panel yellow and no base reads (live 2026-11-17: 16 skipped in a row).
+    monkeypatch.setattr(main, "DECK", (("troop", 24), ("skip", 0), ("hero", 1), ("hero", 1)))  # frames 56-57
+    unread = math.ceil(main.SCOUT_UNREADABLE_SECONDS / STEP) + 2
+    skip = [(56, unread), ("cloud", HOLD), (57, unread), ("cloud", HOLD)]
+    code, taps = run([*skip, (56, unread), ("cloud", HOLD), (57, unread), (7, HOLD), (8, SETTLE + 2),
+                      ("cloud", HOLD), 25])
+    deploy = expected_deploy(frame(57))
+    bases = read_log(tmp_path, main.BASES_LOG)
+
+    assert code == 0
+    assert taps[:3] == [NEXT] * 3
+    assert as_planned(taps[3 : 3 + len(deploy)], frame(57)) == deploy
+    assert [b["decision"] for b in bases] == ["next"] * 3 + ["attack"]
 
 
 def test_home_holds_before_battle_so_a_crate_can_appear(run, monkeypatch):

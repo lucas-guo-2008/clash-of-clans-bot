@@ -174,7 +174,8 @@ def save_run() -> str:
         "commit": git("rev-parse", "HEAD"),
         "dirty": None if status is None else bool(status),  # local settings, e.g. data-run thresholds
         "detector": MODEL_PATH.name,
-        "thresholds": {"total": thresholds.MIN_TOTAL, "max_nexts": thresholds.MAX_NEXTS},
+        "thresholds": {"total": thresholds.MIN_TOTAL, "max_nexts": thresholds.MAX_NEXTS,
+                       "max_unreadable": thresholds.MAX_UNREADABLE},
         "deck": DECK,
         "iterations": ITERATIONS,
         "hero_ability_delay": HERO_ABILITY_DELAY,
@@ -491,6 +492,7 @@ def farm(args, device, buttons, digits, result_digits, detector, view: Viewer | 
     looted = (0, 0, 0)  # gold, elixir, dark elixir over every readable result
     searches = 0
     nexts = 0  # bases skipped in a row since the last deploy (the search cap, thresholds.MAX_NEXTS)
+    unreadable = 0  # judged bases in a row whose loot panel could not be read (thresholds.MAX_UNREADABLE)
     started = clock()
     tapped_on, tapped_at = None, 0.0  # the screen of the last gated tap, and when
     last_screen, frames_on_screen = None, 0
@@ -587,7 +589,7 @@ def farm(args, device, buttons, digits, result_digits, detector, view: Viewer | 
             end_with = "claim-reward"
 
         action = decide(screen, settled if screen is Screen.RESULT else scout_settled, unknown_seconds, end_with,
-                        end_rule, nexts)
+                        end_rule, nexts, unreadable)
         judged = scout_settled is not None and not scout_saved
         if judged:
             buildings = detect_buildings(frame, detector)
@@ -595,6 +597,7 @@ def farm(args, device, buttons, digits, result_digits, detector, view: Viewer | 
             base_id = save_base(frame, run_id, scout_settled, decision, buildings, deploy_points(frame),
                                 None if searched_at is None else now - searched_at, nexts)
             scout_saved = True
+            unreadable = 0 if scout_settled.ok else unreadable + 1
 
         if tapped_on is not None and gate_open(screen, tapped_on, now - tapped_at, frames_on_screen):
             tapped_on = None
@@ -699,7 +702,7 @@ def farm(args, device, buttons, digits, result_digits, detector, view: Viewer | 
                 return 1
             else:
                 deployed_at, trace, battle_frames, last_battle = clock(), [], [], None
-                nexts = 0
+                nexts, unreadable = 0, 0
                 surrender_seen, ended_by, end_tap, arm = False, None, None, rng.choice(ARMS)
                 attacked_id, deployed = base_id, [[p.x, p.y] for p in points]
                 heroes = deploy_army(device, slots, points)
